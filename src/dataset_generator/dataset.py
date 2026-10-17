@@ -51,7 +51,7 @@ def to_record(
                 ]
             record = {"conversations": conversation}
         case other:
-            raise ValueError(f"неизвестный формат датасета: {other}")
+            raise ValueError(f"unknown dataset format: {other}")
     record["metadata"] = metadata
     return record
 
@@ -59,15 +59,15 @@ def to_record(
 def sample_record(kind: DatasetKind, dataset_format: str, include_system: bool) -> dict[str, Any]:
     """Пример записи датасета — для показа пользователю при выборе типа."""
     example = kind.sample
-    system = TRAINING_SYSTEM_PROMPTS["ru"].split(":")[0] + "…" if include_system else None
+    system = TRAINING_SYSTEM_PROMPTS["en"].split(":")[0] + "…" if include_system else None
     metadata = {
         "source": "trasology.pdf",
         "chunk": 12,
         "kind": kind.key,
         "category": example.category,
         "type": example.subtype,
-        "language": "ru",
-        "model": "qwen3:8b",
+        "language": "en",
+        "model": "qwen3:30b-a3b-instruct-2507-q4_K_M",
     }
     return to_record(example, dataset_format=dataset_format, system=system, metadata=metadata)
 
@@ -136,7 +136,7 @@ class DatasetWriter:
         prefix = f"{source.name}.{run}"
         if run == MIXED:
             self.paths = {key: settings.output_dir / f"{prefix}.{key}.jsonl" for key in KINDS}
-            self.output_label = str(settings.output_dir / f"{prefix}.<тип>.jsonl")
+            self.output_label = str(settings.output_dir / f"{prefix}.<type>.jsonl")
         else:
             self.paths = {run: settings.output_dir / f"{prefix}.jsonl"}
             self.output_label = str(self.paths[run])

@@ -61,19 +61,20 @@ async def check_model(client: AsyncClient, settings: Settings) -> list[str]:
         info = await client.show(settings.model)
     except ConnectionError as exc:
         raise ModelUnavailableError(
-            "Ollama не отвечает. Запустите её: sudo systemctl start ollama (или ollama serve)"
+            "Ollama is not responding. Start it: sudo systemctl start ollama (or ollama serve)"
         ) from exc
     except ResponseError as exc:
         if exc.status_code == 404:
             raise ModelUnavailableError(
-                f"модель {settings.model} не найдена. Скачайте её: ollama pull {settings.model}"
+                f"model {settings.model} not found. Download it: ollama pull {settings.model}"
             ) from exc
         raise ModelUnavailableError(f"Ollama: {exc.error}") from exc
 
     warnings = []
-    if settings.think and "thinking" not in (info.capabilities or []):
+    settings.think_supported = "thinking" in (info.capabilities or [])
+    if settings.think and not settings.think_supported:
         settings.think = False
-        warnings.append(f"модель {settings.model} не поддерживает режим мышления — он выключен")
+        warnings.append(f"model {settings.model} does not support thinking mode — thinking is off")
     return warnings
 
 
@@ -94,7 +95,8 @@ async def stream_structured(
         stream = await client.chat(
             model=settings.model,
             messages=messages,
-            think=think,
+            # Моделям без режима мышления (например, Qwen3 Instruct-2507) параметр не передаём.
+            think=think if settings.think_supported else None,
             format=schema.model_json_schema(),
             options=settings.sampling_options(think),
             stream=True,
@@ -114,13 +116,13 @@ async def stream_structured(
 
     if done_reason == "length":
         raise GenerationError(
-            "ответ обрезан: модель упёрлась в лимит токенов (увеличьте --num-predict)"
+            "response truncated: the model hit the token limit (increase --num-predict)"
         )
     try:
         value = schema.model_validate_json("".join(content))
     except ValidationError as exc:
         errors = exc.error_count()
-        raise GenerationError(f"модель вернула некорректный JSON ({errors} ош.)") from exc
+        raise GenerationError(f"the model returned invalid JSON ({errors} errors)") from exc
     yield Structured(value, tokens, time.monotonic() - started)
 
 

@@ -134,7 +134,6 @@ DATASET TYPES
 Response fields: genre — the genre of the source (research article, dissertation, study \
 report, expert report, casework review, guideline, textbook, monograph, etc.); topic — the \
 main topic, briefly; kind — the chosen type; reason — a justification in 1–2 sentences. \
-Write genre, topic and reason in Russian: they are shown in a Russian-language interface. \
 Respond with a JSON object only.\
 """
 
@@ -150,11 +149,11 @@ def build_generation_messages(
     max_items: int,
 ) -> list[dict[str, str]]:
     system = _GENERATION_SYSTEM_PROMPT.format(
-        language=language.prompt_label,
-        task=f"TASK\n{kind.prompt.task}",
+        language=language.label,
+        task=f"TASK\n{kind.task}",
         output_format=(
             "A JSON object only, no explanations: the items field is an array of objects with "
-            f"the fields {kind.prompt.fields}."
+            f"the fields {kind.fields}."
         ),
     )
     user = _USER_PROMPT.format(
@@ -163,7 +162,7 @@ def build_generation_messages(
         number=number,
         total=total,
         max_items=max_items,
-        unit=kind.prompt.unit,
+        unit=kind.unit,
     )
     return [{"role": "system", "content": system}, {"role": "user", "content": user}]
 
@@ -173,13 +172,13 @@ def build_mixed_messages(
 ) -> list[dict[str, str]]:
     """Режим «по фрагментам»: модель сама выбирает подходящие фрагменту типы."""
     kinds = "\n\n".join(
-        f"[{kind.key}] {kind.prompt.name}. Use when the fragment contains: "
-        f"{kind.prompt.fragment_hint}.\n{kind.prompt.task}"
+        f"[{kind.key}] {kind.title}. Use when the fragment contains: "
+        f"{kind.fragment_hint}.\n{kind.task}"
         for kind in KINDS.values()
     )
-    fields = "; ".join(f"{kind.key} — {kind.prompt.fields}" for kind in KINDS.values())
+    fields = "; ".join(f"{kind.key} — {kind.fields}" for kind in KINDS.values())
     system = _GENERATION_SYSTEM_PROMPT.format(
-        language=language.prompt_label,
+        language=language.label,
         task=_MIXED_TASK.format(kinds=kinds),
         output_format=(
             "A JSON object only, no explanations: selected — an array of the keys of the "
@@ -200,7 +199,7 @@ def build_mixed_messages(
 
 def build_analysis_messages(source: str, samples: list[str]) -> list[dict[str, str]]:
     kinds = "\n".join(
-        f"- {kind.key} — {kind.prompt.name}: {kind.prompt.summary}. Best for: {kind.prompt.suits}."
+        f"- {kind.key} — {kind.title}: {kind.summary}. Best for: {kind.suits}."
         for kind in KINDS.values()
     )
     fragments = "\n\n".join(f"[Fragment {i}]\n{text}" for i, text in enumerate(samples, 1))
@@ -208,7 +207,6 @@ def build_analysis_messages(source: str, samples: list[str]) -> list[dict[str, s
         {"role": "system", "content": _ANALYSIS_SYSTEM_PROMPT.format(kinds=kinds)},
         {
             "role": "user",
-            "content": f"Source: {source}\n\n{fragments}\n\n"
-            "Write the genre, topic and reason fields in Russian.",
+            "content": f"Source: {source}\n\n{fragments}",
         },
     ]

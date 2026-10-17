@@ -118,7 +118,7 @@ class PathSuggester(Suggester):
 
 class DatasetApp(App[None]):
     TITLE = "Dataset Generator"
-    SUB_TITLE = "датасеты по криминалистике · Ollama"
+    SUB_TITLE = "forensic science datasets · Ollama"
 
     CSS = """
     #path { margin: 0 1; }
@@ -135,10 +135,10 @@ class DatasetApp(App[None]):
     """
 
     BINDINGS: ClassVar[list[Binding]] = [
-        Binding("f2", "toggle_think", "Мышление вкл/выкл"),
-        Binding("f3", "stop", "Стоп"),
-        Binding("f4", "clear", "Очистить"),
-        Binding("ctrl+q", "quit", "Выход", priority=True),
+        Binding("f2", "toggle_think", "Thinking on/off"),
+        Binding("f3", "stop", "Stop"),
+        Binding("f4", "clear", "Clear"),
+        Binding("ctrl+q", "quit", "Quit", priority=True),
     ]
 
     def __init__(self, settings: Settings, files: list[Path]) -> None:
@@ -166,7 +166,12 @@ class DatasetApp(App[None]):
     def compose(self) -> ComposeResult:
         yield Header()
         yield Input(
-            placeholder="Имя файла или путь (pdf, epub, fb2, mobi, djvu, docx, txt…) — Enter",
+            placeholder=(
+                "Add another file or folder to the queue (optional — the file from the command "
+                "line is already queued) — Enter"
+                if self.initial_files
+                else "File name or path (pdf, epub, fb2, mobi, djvu, docx, txt…) — Enter"
+            ),
             suggester=PathSuggester(self.settings.input_dir),
             id="path",
         )
@@ -185,20 +190,20 @@ class DatasetApp(App[None]):
 
     def on_mount(self) -> None:
         self.client = AsyncClient(host=self.settings.host)
-        self.query_one("#info").border_title = "Настройки"
-        self.query_one("#queue").border_title = "Очередь"
-        self.query_one("#stats").border_title = "Статистика и время"
-        self.query_one("#hardware").border_title = "ПК и скорость модели"
-        self.query_one("#thinking").border_title = "🧠 Размышления модели"
-        self.query_one("#answer").border_title = "📝 Ответ модели (JSON)"
-        self.query_one("#journal").border_title = "📚 Датасет и журнал"
+        self.query_one("#info").border_title = "Settings"
+        self.query_one("#queue").border_title = "Queue"
+        self.query_one("#stats").border_title = "Progress and time"
+        self.query_one("#hardware").border_title = "PC and model speed"
+        self.query_one("#thinking").border_title = "🧠 Model thinking"
+        self.query_one("#answer").border_title = "📝 Model response (JSON)"
+        self.query_one("#journal").border_title = "📚 Dataset and log"
         self.refresh_sidebar()
         self.refresh_hardware()
         self.set_interval(1, self.refresh_stats)
         self.query_one(Input).focus()
         self.log_line(
-            f"Введите имя файла из «{self.settings.input_dir}/» или путь к файлу/папке и "
-            "нажмите Enter. → — автодополнение, пустой Enter — перезапустить очередь.",
+            f'Enter a file name from "{self.settings.input_dir}/" or a path to a file/folder '
+            "and press Enter. → accepts autocompletion, an empty Enter restarts the queue.",
             "dim",
         )
         if self.initial_files:
@@ -221,13 +226,13 @@ class DatasetApp(App[None]):
             return
         files = resolve_input(value, self.settings)
         if not files:
-            self.log_line(f"✗ Не найден файл или папка: {value}", "bold red")
+            self.log_line(f"✗ File or folder not found: {value}", "bold red")
             return
         supported = [f for f in files if is_supported(f)]
         for path in files:
             if path not in supported:
                 self.log_line(
-                    f"✗ Формат {path.suffix or '(без расширения)'} не поддерживается: {path.name}",
+                    f"✗ Unsupported format {path.suffix or '(no extension)'}: {path.name}",
                     "red",
                 )
         if supported:
@@ -235,13 +240,22 @@ class DatasetApp(App[None]):
 
     def request_jobs(self, files: list[Path]) -> None:
         """Ставит файлы в очередь; если тип датасета не задан флагом — спрашивает."""
+        busy = {job.path.resolve() for job in self.queue}
+        if self.current:
+            busy.add(self.current.path.resolve())
+        for path in files:
+            if path.resolve() in busy:
+                self.log_line(f"· {path.name} is already queued — not adding it twice", "dim")
+        files = [path for path in files if path.resolve() not in busy]
+        if not files:
+            return
         if self.settings.dataset_kind:
             self.enqueue(files, self.settings.dataset_kind, self.settings.dataset_format)
             return
 
         def on_choice(choice: tuple[str, str] | None) -> None:
             if choice is None:
-                self.log_line("Отменено — файлы не добавлены.", "dim")
+                self.log_line("Cancelled — no files added.", "dim")
             else:
                 self.enqueue(files, *choice)
 
@@ -250,8 +264,8 @@ class DatasetApp(App[None]):
     def enqueue(self, files: list[Path], kind: str, dataset_format: str) -> None:
         self.queue.extend(Job(path, kind, dataset_format) for path in files)
         names = ", ".join(p.name for p in files[:5])
-        more = f" и ещё {len(files) - 5}" if len(files) > 5 else ""
-        self.log_line(f"+ В очередь: {names}{more} · {run_title(kind)} · {dataset_format}", "cyan")
+        more = f" and {len(files) - 5} more" if len(files) > 5 else ""
+        self.log_line(f"+ Queued: {names}{more} · {run_title(kind)} · {dataset_format}", "cyan")
         self.refresh_sidebar()
         self.start_processing()
 
@@ -268,7 +282,7 @@ class DatasetApp(App[None]):
                 warnings = await check_model(self.client, self.settings)
             except ModelUnavailableError as exc:
                 self.log_line(f"✗ {exc}", "bold red")
-                self.log_line("Когда исправите — нажмите Enter в пустом поле ввода.", "dim")
+                self.log_line("Once fixed, press Enter in the empty input field.", "dim")
                 return
             for warning in warnings:
                 self.log_line(f"! {warning}", "yellow")
@@ -284,13 +298,13 @@ class DatasetApp(App[None]):
                     self.handle_event(event)
             except Exception as exc:  # показываем ошибку, а не роняем TUI
                 name = self.current.path.name
-                self.log_line(f"✗ {name}: непредвиденная ошибка: {exc!r}", "bold red")
+                self.log_line(f"✗ {name}: unexpected error: {exc!r}", "bold red")
             finally:
                 self.current = None
                 self.chunk_started_at = None
                 self.eta = None
                 self.refresh_sidebar()
-        self.notify("Очередь обработана", title="Готово")
+        self.notify("Queue finished", title="Done")
 
     # --- события конвейера -------------------------------------------------
 
@@ -306,30 +320,32 @@ class DatasetApp(App[None]):
                 answer.append(event.text)
             case FileStarted():
                 self.log_line(
-                    Text.assemble(("▶ ", "bold"), (event.path.name, "bold"), " — извлекаю текст…")
+                    Text.assemble(("▶ ", "bold"), (event.path.name, "bold"), " — extracting text…")
                 )
             case TextExtracted():
                 chars = f"{event.chars:,}".replace(",", " ")
-                how = "определён автоматически" if event.detected else "задан вручную"
+                how = "detected automatically" if event.detected else "set manually"
                 self.current_details = event.language
                 refs = (
-                    f" Вырезан список литературы: {event.references_removed} записей."
+                    f" Removed reference list entries: {event.references_removed}."
                     if event.references_removed
                     else ""
                 )
                 self.log_line(
-                    f"  {chars} символов → {event.total_chunks} фрагментов. "
-                    f"Язык: {event.language} ({how}).{refs}",
+                    f"  {chars} characters → {event.total_chunks} fragments. "
+                    f"Language: {event.language} ({how}).{refs}",
                     "dim",
                 )
                 self.refresh_sidebar()
             case AnalysisStarted():
-                self.chunk_label = "анализ документа"
+                self.chunk_label = "analysing document"
                 self.chunk_started_at = time.monotonic()
                 thinking.reset()
                 answer.reset()
-                thinking.border_subtitle = "анализ источника — выбор типа датасета"
-                self.log_line("  🔎 Модель изучает документ, чтобы выбрать тип датасета…", "dim")
+                thinking.border_subtitle = "source analysis — choosing the dataset type"
+                self.log_line(
+                    "  🔎 The model is studying the document to choose a dataset type…", "dim"
+                )
             case KindChosen():
                 self.chunk_started_at = None
                 self.current_details = f"{event.title} · {self.current_details}"
@@ -337,26 +353,28 @@ class DatasetApp(App[None]):
                 if event.how == "auto":
                     self.log_line(
                         Text.assemble(
-                            ("  🔎 Тип датасета: ", "bold"),
+                            ("  🔎 Dataset type: ", "bold"),
                             (event.title, "bold magenta"),
-                            f" (источник: {event.genre}). {event.reason}",
+                            f" (source: {event.genre}). {event.reason}",
                         )
                     )
                 elif event.how == "resumed":
-                    self.log_line(f"  Тип датасета из прошлого анализа: {event.title}", "dim")
+                    self.log_line(
+                        f"  Dataset type from the previous analysis: {event.title}", "dim"
+                    )
                 elif event.how == "fallback":
                     self.log_line(
-                        f"! Анализ не удался ({event.reason}) — беру «{event.title}»", "yellow"
+                        f'! Analysis failed ({event.reason}) — using "{event.title}"', "yellow"
                     )
             case FileLoaded():
                 progress.update(total=event.total_chunks, progress=event.already_done)
-                resumed = f"продолжаю с {event.already_done}. " if event.already_done else ""
-                self.log_line(f"  {resumed}Датасет: {event.output}", "dim")
+                resumed = f"resuming from {event.already_done}. " if event.already_done else ""
+                self.log_line(f"  {resumed}Dataset: {event.output}", "dim")
                 self.estimate_label = "—"
             case SpeedMeasureStarted():
-                self.chunk_label = "замер скорости"
+                self.chunk_label = "measuring speed"
                 self.chunk_started_at = time.monotonic()
-                self.log_line("  ⏱ Замеряю скорость модели на этом ПК (один раз за сеанс)…", "dim")
+                self.log_line("  ⏱ Measuring model speed on this PC (once per session)…", "dim")
             case SpeedMeasured():
                 self.chunk_started_at = None
                 self.speed, self.system = event.speed, event.system
@@ -369,23 +387,23 @@ class DatasetApp(App[None]):
                 self.estimate_label = format_duration(estimate.seconds)
                 self.log_line(
                     Text.assemble(
-                        ("  ⏱ Оценка времени: ", "bold"),
+                        ("  ⏱ Time estimate: ", "bold"),
                         (estimate.label, "bold yellow"),
-                        f" — {estimate.chunks} фрагм., ~{format_duration(estimate.per_chunk)} "
-                        "на фрагмент. Уточняется по ходу работы.",
+                        f" — {estimate.chunks} fragments, ~{format_duration(estimate.per_chunk)} "
+                        "per fragment. Refined as work progresses.",
                     )
                 )
             case ChunkStarted():
                 self.chunk_label = f"{event.index + 1}/{event.total}"
                 self.chunk_started_at = time.monotonic()
-                thinking.reset("" if event.think else "(мышление выключено — ответ сразу)")
+                thinking.reset("" if event.think else "(thinking is off — answering directly)")
                 answer.reset()
-                mode = "" if event.think else " · без мышления"
-                thinking.border_subtitle = f"фрагмент {self.chunk_label}{mode}"
+                mode = "" if event.think else " · no thinking"
+                thinking.border_subtitle = f"fragment {self.chunk_label}{mode}"
             case ChunkRetry():
                 self.log_line(
-                    f"! Фрагмент {event.index + 1}: {event.reason} — повтор "
-                    f"(попытка {event.attempt + 1})",
+                    f"! Fragment {event.index + 1}: {event.reason} — retrying "
+                    f"(attempt {event.attempt + 1})",
                     "yellow",
                 )
             case ChunkFinished():
@@ -399,19 +417,19 @@ class DatasetApp(App[None]):
                 if self.eta:
                     self.eta.chunk_done(event.elapsed)
                 self.log_line(
-                    f"✗ Фрагмент {event.index + 1} пропущен: {event.reason}. "
-                    "Его повторят при следующем запуске этого файла.",
+                    f"✗ Fragment {event.index + 1} skipped: {event.reason}. "
+                    "It will be retried the next time this file is processed.",
                     "red",
                 )
             case FileFinished():
-                failed = f", не удалось: {event.failed_chunks}" if event.failed_chunks else ""
+                failed = f", failed: {event.failed_chunks}" if event.failed_chunks else ""
                 total = sum(event.records.values())
                 by_kind = ""
                 if len(event.records) > 1:
                     parts = [f"{run_title(k)}: {n}" for k, n in event.records.items() if n]
                     by_kind = f" ({', '.join(parts)})" if parts else ""
                 self.log_line(
-                    f"✔ {event.path.name}: всего {total} примеров{by_kind}{failed} → "
+                    f"✔ {event.path.name}: {total} examples in total{by_kind}{failed} → "
                     f"{event.output}",
                     "bold green",
                 )
@@ -428,20 +446,18 @@ class DatasetApp(App[None]):
             self.last_speed = event.tokens / event.seconds
         if not event.examples:
             self.chunks_empty += 1
-            self.log_line(
-                f"· Фрагмент {event.index + 1}/{event.total}: полезного содержания нет", "dim"
-            )
+            self.log_line(f"· Fragment {event.index + 1}/{event.total}: no useful content", "dim")
             return
         dropped = len(event.examples) - event.written
-        note = f", отброшено дублей/коротких: {dropped}" if dropped else ""
+        note = f", dropped duplicates/too short: {dropped}" if dropped else ""
         if self.current and self.current.kind == MIXED:
             counts: dict[str, int] = {}
             for example in event.examples:
                 counts[example.kind] = counts.get(example.kind, 0) + 1
             note = " — " + ", ".join(f"{run_title(k)} ×{n}" for k, n in counts.items()) + note
         self.log_line(
-            f"✓ Фрагмент {event.index + 1}/{event.total}: +{event.written} примеров "
-            f"за {format_duration(event.elapsed)}{note}",
+            f"✓ Fragment {event.index + 1}/{event.total}: +{event.written} examples "
+            f"in {format_duration(event.elapsed)}{note}",
             "bold green",
         )
         for example in event.examples:
@@ -452,18 +468,19 @@ class DatasetApp(App[None]):
 
     def refresh_sidebar(self) -> None:
         s = self.settings
-        think = "[green]вкл[/]" if s.think else "[red]выкл[/]"
-        kind = "спрашивать" if s.dataset_kind is None else run_title(s.dataset_kind)
-        language = "как у источника" if s.language == "auto" else escape(s.language)
+        think = "[green]on[/]" if s.think else "[red]off[/]"
+        kind = "ask" if s.dataset_kind is None else run_title(s.dataset_kind)
+        language = "same as source" if s.language == "auto" else escape(s.language)
         self.query_one("#info", Static).update(
-            f"Модель:   [b]{escape(s.model)}[/] "
-            f"{'' if self.model_ready else '[dim](не проверена)[/]'}\n"
-            f"Мышление: {think} [dim](F2)[/]\n"
-            f"Тип:      {kind}\n"
-            f"Язык:     {language}\n"
-            f"Фрагмент: {s.chunk_size} симв.{' + system' if s.include_system else ''}\n"
-            f"Вход:     {escape(str(s.input_dir))}/\n"
-            f"Выход:    {escape(str(s.output_dir))}/"
+            f"Model:    [b]{escape(s.model)}[/] "
+            f"{'' if self.model_ready else '[dim](not checked)[/]'}\n"
+            f"Thinking: {think} [dim](F2)[/]\n"
+            f"Threads:  {s.threads or 'auto'}\n"
+            f"Type:     {kind}\n"
+            f"Language: {language}\n"
+            f"Fragment: {s.chunk_size} chars{' + system' if s.include_system else ''}\n"
+            f"Input:    {escape(str(s.input_dir))}/\n"
+            f"Output:   {escape(str(s.output_dir))}/"
         )
         lines = []
         if self.current:
@@ -472,7 +489,7 @@ class DatasetApp(App[None]):
                 lines.append(Text(f"  {self.current_details}", style="yellow"))
         for job in self.queue:
             lines.append(Text.assemble(f"  {job.path.name} ", (f"· {run_title(job.kind)}", "dim")))
-        queue = Text("\n").join(lines) if lines else Text("пусто", style="dim")
+        queue = Text("\n").join(lines) if lines else Text("empty", style="dim")
         self.query_one("#queue", Static).update(queue)
 
     def refresh_stats(self) -> None:
@@ -482,28 +499,28 @@ class DatasetApp(App[None]):
             current = time.monotonic() - self.chunk_started_at
             seconds = int(current)
             elapsed = f" [yellow]⏳ {seconds // 60}:{seconds % 60:02d}[/]"
-        speed = f"{self.last_speed:.1f} ток/с" if self.last_speed else "—"
+        speed = f"{self.last_speed:.1f} tok/s" if self.last_speed else "—"
         left = "—"
         if self.eta and self.eta.remaining:
             left = f"≈ {format_duration(self.eta.seconds_left(current))}"
         elif self.eta:
-            left = "готово"
+            left = "done"
         self.query_one("#stats", Static).update(
-            f"Фрагмент:      {self.chunk_label}{elapsed}\n"
-            f"Примеров:      [b green]{self.examples_written}[/]\n"
-            f"Обработано:    {self.chunks_done}\n"
-            f"Без пользы:    {self.chunks_empty}\n"
-            f"Ошибок:        {self.chunks_failed}\n"
-            f"Скорость:      {speed}\n"
-            f"Оценка файла:  {self.estimate_label}\n"
-            f"Осталось:      [b yellow]{left}[/]"
+            f"Fragment:      {self.chunk_label}{elapsed}\n"
+            f"Examples:      [b green]{self.examples_written}[/]\n"
+            f"Processed:     {self.chunks_done}\n"
+            f"No content:    {self.chunks_empty}\n"
+            f"Errors:        {self.chunks_failed}\n"
+            f"Speed:         {speed}\n"
+            f"File estimate: {self.estimate_label}\n"
+            f"Time left:     [b yellow]{left}[/]"
         )
 
     @staticmethod
     def speed_label(speed: Speed) -> str:
-        basis = "замер" if speed.measured else "грубая оценка по железу"
+        basis = "measured" if speed.measured else "rough hardware estimate"
         return (
-            f"Чтение {speed.prompt_tps:.0f} ток/с, генерация {speed.gen_tps:.1f} ток/с "
+            f"Reading {speed.prompt_tps:.0f} tok/s, generation {speed.gen_tps:.1f} tok/s "
             f"({basis}), {speed.device}"
         )
 
@@ -512,36 +529,34 @@ class DatasetApp(App[None]):
         if self.system:
             lines += [
                 escape(self.system.cpu),
-                f"{self.system.threads} потоков · ОЗУ {self.system.ram_total_gb:.0f} ГБ",
+                f"{self.system.threads} threads · {self.system.ram_total_gb:.0f} GB RAM",
             ]
         if self.speed:
-            basis = "" if self.speed.measured else " [dim](грубо)[/]"
+            basis = "" if self.speed.measured else " [dim](rough)[/]"
             lines += [
                 escape(self.speed.device),
-                f"чтение:    {self.speed.prompt_tps:.0f} ток/с{basis}",
-                f"генерация: {self.speed.gen_tps:.1f} ток/с{basis}",
+                f"reading:    {self.speed.prompt_tps:.0f} tok/s{basis}",
+                f"generation: {self.speed.gen_tps:.1f} tok/s{basis}",
             ]
         self.query_one("#hardware", Static).update(
-            "\n".join(lines) or "[dim]замер при первом файле[/]"
+            "\n".join(lines) or "[dim]measured on the first file[/]"
         )
 
     # --- действия ------------------------------------------------------------
 
     def action_toggle_think(self) -> None:
         self.settings.think = not self.settings.think
-        state = "включено" if self.settings.think else "выключено"
-        self.notify(f"Мышление {state} — применится со следующего фрагмента")
+        state = "on" if self.settings.think else "off"
+        self.notify(f"Thinking {state} — applies from the next fragment")
         self.refresh_sidebar()
 
     def action_stop(self) -> None:
         if self.worker is None or not self.worker.is_running:
-            self.notify("Сейчас ничего не обрабатывается")
+            self.notify("Nothing is being processed right now")
             return
         self.queue.clear()
         self.worker.cancel()
-        self.log_line(
-            "■ Остановлено. Прогресс сохранён — добавьте файл снова, чтобы продолжить.", "yellow"
-        )
+        self.log_line("■ Stopped. Progress is saved — add the file again to continue.", "yellow")
 
     def action_clear(self) -> None:
         self.journal.clear()

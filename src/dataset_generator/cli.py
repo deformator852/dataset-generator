@@ -14,103 +14,115 @@ def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="dataset-generator",
         description=(
-            "Превращает статьи, исследования, книги и другие документы в обучающий датасет по "
-            "криминалистике "
-            "с помощью локальной модели в Ollama."
+            "Turns articles, studies, books and other documents into forensic science "
+            "training datasets using a local model in Ollama."
         ),
-        epilog="Поддерживаемые форматы: " + ", ".join(sorted(SUPPORTED_SUFFIXES)),
+        epilog="Supported formats: " + ", ".join(sorted(SUPPORTED_SUFFIXES)),
     )
     parser.add_argument(
         "files",
         nargs="*",
-        help="имена файлов (ищутся также в папке --input-dir) или папки; "
-        "без аргументов TUI спросит файл сам",
+        help="file names (also looked up in --input-dir) or folders; "
+        "without arguments the TUI asks for a file",
     )
-    parser.add_argument("-m", "--model", default=defaults.model, help="модель Ollama (%(default)s)")
+    parser.add_argument("-m", "--model", default=defaults.model, help="Ollama model (%(default)s)")
     parser.add_argument(
-        "--host", default=None, help="адрес Ollama (по умолчанию OLLAMA_HOST или localhost:11434)"
+        "--host", default=None, help="Ollama address (default: OLLAMA_HOST or localhost:11434)"
     )
     parser.add_argument(
         "-i",
         "--input-dir",
         type=Path,
         default=defaults.input_dir,
-        help="папка с исходными файлами (%(default)s)",
+        help="folder with source files (%(default)s)",
     )
     parser.add_argument(
         "-o",
         "--output-dir",
         type=Path,
         default=defaults.output_dir,
-        help="папка для датасетов (%(default)s)",
+        help="folder for datasets (%(default)s)",
     )
     parser.add_argument(
         "-k",
         "--kind",
         choices=[MIXED, AUTO, *KINDS],
         default=None,
-        help="тип датасета: mixed — модель выбирает тип для каждого фрагмента (несколько "
-        "датасетов); auto — модель выбирает один тип на весь документ; "
+        help="dataset type: mixed — the model picks types for each fragment (several "
+        "datasets); auto — the model picks one type for the whole document; "
         + ", ".join(f"{key} — {kind.title}" for key, kind in KINDS.items())
-        + ". Не указан — программа спросит с примерами",
+        + ". If omitted, the app asks and shows examples",
     )
     parser.add_argument(
         "-f",
         "--format",
         choices=DATASET_FORMATS,
         default=defaults.dataset_format,
-        help="формат записей JSONL (%(default)s)",
+        help="JSONL record format (%(default)s)",
     )
     parser.add_argument(
-        "--no-system", action="store_true", help="не добавлять system-промпт в обучающие примеры"
+        "--no-system", action="store_true", help="do not add a system prompt to training examples"
     )
     parser.add_argument(
         "--language",
         default=defaults.language,
-        help="язык датасета: auto — как у источника, или код (ru, en, uk…) (%(default)s)",
+        help="dataset language: auto — same as the source, or a code (en, ru, uk…) (%(default)s)",
     )
     parser.add_argument(
         "--chunk-size",
         type=int,
         default=defaults.chunk_size,
-        help="размер фрагмента текста в символах (%(default)s)",
+        help="text fragment size in characters (%(default)s)",
     )
     parser.add_argument(
         "--overlap",
         type=int,
         default=defaults.chunk_overlap,
-        help="перекрытие фрагментов в символах (%(default)s)",
+        help="fragment overlap in characters (%(default)s)",
     )
     parser.add_argument(
         "-n",
         "--max-items",
         type=int,
         default=None,
-        help="максимум примеров на фрагмент (по умолчанию своё для каждого типа)",
+        help="max examples per fragment (default depends on the type)",
     )
     parser.add_argument(
         "--num-ctx",
         type=int,
         default=defaults.num_ctx,
-        help="контекстное окно модели в токенах (%(default)s)",
+        help="model context window in tokens (%(default)s)",
     )
     parser.add_argument(
         "--num-predict",
         type=int,
         default=defaults.num_predict,
-        help="лимит генерируемых токенов, включая мышление (%(default)s)",
+        help="generated token limit, including thinking (%(default)s)",
     )
     parser.add_argument(
         "--retries",
         type=int,
         default=defaults.retries,
-        help="повторы при ошибке генерации (%(default)s)",
+        help="retries on generation errors (%(default)s)",
     )
     parser.add_argument(
-        "--no-think", action="store_true", help="выключить режим мышления Qwen3 (в разы быстрее)"
+        "-t",
+        "--threads",
+        type=int,
+        default=None,
+        help="CPU threads for the model (default: Ollama decides, usually only performance cores)",
+    )
+    thinking = parser.add_mutually_exclusive_group()
+    thinking.add_argument(
+        "--think",
+        action="store_true",
+        help="enable Qwen3 thinking mode (better reasoning, about twice as slow)",
+    )
+    thinking.add_argument(
+        "--no-think", action="store_true", help="disable thinking mode (the default)"
     )
     parser.add_argument(
-        "--no-tui", action="store_true", help="простой потоковый вывод в терминал вместо TUI"
+        "--no-tui", action="store_true", help="plain streaming terminal output instead of the TUI"
     )
     return parser
 
@@ -119,11 +131,11 @@ def main(argv: list[str] | None = None) -> None:
     parser = build_parser()
     args = parser.parse_args(argv)
     if args.chunk_size < 500:
-        parser.error("--chunk-size должен быть не меньше 500")
+        parser.error("--chunk-size must be at least 500")
     if not 0 <= args.overlap < args.chunk_size // 2:
-        parser.error("--overlap должен быть от 0 до половины --chunk-size")
+        parser.error("--overlap must be between 0 and half of --chunk-size")
     if (args.max_items is not None and args.max_items < 1) or args.retries < 0:
-        parser.error("--max-items должен быть ≥ 1, --retries ≥ 0")
+        parser.error("--max-items must be ≥ 1 and --retries ≥ 0")
 
     settings = Settings(
         model=args.model,
@@ -139,8 +151,9 @@ def main(argv: list[str] | None = None) -> None:
         max_items=args.max_items,
         num_ctx=args.num_ctx,
         num_predict=args.num_predict,
-        think=not args.no_think,
+        think=args.think,
         retries=args.retries,
+        threads=args.threads,
     )
     settings.input_dir.mkdir(parents=True, exist_ok=True)
     settings.output_dir.mkdir(parents=True, exist_ok=True)
@@ -149,16 +162,16 @@ def main(argv: list[str] | None = None) -> None:
     for raw in args.files:
         found = [path for path in resolve_input(raw, settings) if is_supported(path)]
         if not found:
-            parser.error(f"не найден поддерживаемый файл: {raw}")
+            parser.error(f"no supported file found: {raw}")
         files.extend(found)
 
     if args.no_tui:
         if not files:
-            parser.error("в режиме --no-tui укажите хотя бы один файл")
+            parser.error("--no-tui needs at least one file")
         try:
             sys.exit(asyncio.run(run_console_lazy(settings, files)))
         except KeyboardInterrupt:
-            print("\nОстановлено. Прогресс сохранён — повторный запуск продолжит с того же места.")
+            print("\nStopped. Progress is saved — run again to continue where you left off.")
             sys.exit(130)
 
     from dataset_generator.tui import run_tui

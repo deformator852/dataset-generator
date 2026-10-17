@@ -67,35 +67,23 @@ class DialogueItem(BaseModel):
 
 
 @dataclass(slots=True, frozen=True)
-class KindPrompt:
-    """Описание типа для модели. Все промпты на английском: так модель лучше понимает
-    задачу, а большинство источников англоязычные. Язык датасета задаётся отдельно."""
-
-    name: str
-    summary: str
-    suits: str  # для каких источников подходит — для авто-анализа
-    fragment_hint: str  # какой фрагмент подходит — для режима «по фрагментам»
-    unit: str  # «at most N <unit>» в запросе к модели
-    fields: str  # описание полей JSON
-    task: str  # раздел промпта с постановкой задачи
-
-
-@dataclass(slots=True, frozen=True)
 class DatasetKind:
-    # Поля интерфейса (на русском)
+    """Тип датасета. Тексты на английском — и для интерфейса, и для промпта модели."""
+
     key: str
     title: str
     icon: str
     summary: str
-    suits: str
-    fragment_hint: str
-    # Всё, что уходит модели (на английском)
-    prompt: KindPrompt
+    suits: str  # для каких источников подходит — видят и пользователь, и авто-анализ
+    fragment_hint: str  # какой фрагмент подходит — для режима «по фрагментам»
+    unit: str  # «at most N <unit>» в запросе к модели
+    fields: str  # описание полей JSON для промпта
+    task: str  # раздел промпта с постановкой задачи
     default_items: int
     item_chars: int  # средний объём одного примера — для оценки времени
     item_model: type[BaseModel]
     convert: Callable[[Any], Example]
-    sample: Example
+    sample: Example  # пример для окна выбора
     result_model: type[BaseModel] = field(init=False)
 
     def __post_init__(self) -> None:
@@ -113,21 +101,16 @@ KINDS: dict[str, DatasetKind] = {
     for kind in (
         DatasetKind(
             key="qa",
-            title="Вопрос — ответ",
+            title="Question–answer",
             icon="❓",
-            summary="определения, объяснения, классификации, процессуальные вопросы",
-            suits="учебники, лекции, справочники, обзорные статьи, комментарии к законам",
-            fragment_hint="определения, классификации, признаки, теоретические положения",
-            prompt=KindPrompt(
-                name="Question–answer",
-                summary="definitions, explanations, classifications, procedures, legal questions",
-                suits="textbooks, lecture notes, reference works, review articles, "
-                "commentaries on legislation",
-                fragment_hint="definitions, classifications, characteristic features, "
-                "theoretical principles",
-                unit="question–answer pairs",
-                fields="question, answer, category, type",
-                task="""\
+            summary="definitions, explanations, classifications, procedures, legal questions",
+            suits="textbooks, lecture notes, reference works, review articles, "
+            "commentaries on legislation",
+            fragment_hint="definitions, classifications, characteristic features, "
+            "theoretical principles",
+            unit="question–answer pairs",
+            fields="question, answer, category, type",
+            task="""\
 Create question–answer pairs based on the fragment. Vary the type field:
 - definition — the definition of a concept or term;
 - explanation — essence, principle, scientific basis, classification;
@@ -136,7 +119,6 @@ examination;
 - comparison — a comparison of methods, types of traces, examinations, tactical techniques;
 - legal — procedural and legal aspects.
 An answer is usually 3–8 sentences; for procedures, a numbered list of steps.""",
-            ),
             default_items=5,
             item_chars=600,
             item_model=QAItem,
@@ -144,40 +126,31 @@ An answer is usually 3–8 sentences; for procedures, a numbered list of steps."
             sample=Example(
                 (
                     (
-                        "Что изучает трасология и какие задачи она решает?",
-                        "Трасология — отрасль криминалистической техники, изучающая "
-                        "закономерности образования следов, а также средства и методы их "
-                        "обнаружения, фиксации, изъятия и исследования. Её задачи — установить "
-                        "механизм происшествия, идентифицировать следообразующий объект "
-                        "(обувь, орудие взлома, транспортное средство) и получить данные для "
-                        "розыска преступника.",
+                        "What does the forensic study of footwear impressions cover, and what "
+                        "questions can it answer?",
+                        "Footwear impression examination studies how shoe soles leave marks, "
+                        "and how those marks are found, documented, recovered and compared. It "
+                        "can help reconstruct events at the scene, link an impression to a "
+                        "specific shoe through class and individual characteristics, and give "
+                        "investigators leads on the offender's movements.",
                     ),
                 ),
-                "трасология",
+                "footwear impressions",
                 "definition",
             ),
         ),
         DatasetKind(
             key="research",
-            title="Разбор исследований",
+            title="Research analysis",
             icon="🔬",
-            summary="цель, методы, результаты, ограничения и практическое значение исследований",
-            suits="научные статьи, диссертации и авторефераты, отчёты об исследованиях и "
-            "экспериментах, тезисы конференций",
-            fragment_hint=(
-                "описание исследования или эксперимента: цель, материалы и методы, выборка, "
-                "результаты, ограничения, практическая значимость"
-            ),
-            prompt=KindPrompt(
-                name="Research analysis",
-                summary="aims, methods, results, limitations and practical value of studies",
-                suits="research articles, dissertations and theses, study and experiment "
-                "reports, conference papers",
-                fragment_hint="a description of a study or experiment: aim, materials and "
-                "methods, sample, results, limitations, practical significance",
-                unit="questions about the research",
-                fields="question, answer, category, aspect",
-                task="""\
+            summary="aims, methods, results, limitations and practical value of studies",
+            suits="research articles, dissertations and theses, study and experiment "
+            "reports, conference papers",
+            fragment_hint="a description of a study or experiment: aim, materials and "
+            "methods, sample, results, limitations, practical significance",
+            unit="questions about the research",
+            fields="question, answer, category, aspect",
+            task="""\
 Create questions and answers that teach how to understand research in forensic science \
 and criminalistics. Vary the aspect field:
 - background — what problem the study addresses and why it matters for practice;
@@ -187,7 +160,6 @@ and criminalistics. Vary the aspect field:
 - application — how the findings can be used in forensic casework and investigations.
 A question names the subject of the research ("studies of footwear identification from \
 impressions in snow"), not "this study". An answer is 3–6 sentences.""",
-            ),
             default_items=4,
             item_chars=700,
             item_model=ResearchItem,
@@ -197,42 +169,32 @@ impressions in snow"), not "this study". An answer is 3–6 sentences.""",
             sample=Example(
                 (
                     (
-                        "Как в исследованиях оценивают надёжность автоматизированного сравнения "
-                        "следов обуви и что ограничивает такие результаты?",
-                        "Надёжность оценивают на выборке пар следов с заранее известным "
-                        "источником: считают долю верных совпадений и ложных срабатываний. "
-                        "Результаты ограничены качеством и полнотой следов и однородностью "
-                        "выборки: лабораторные отпечатки чище реальных, поэтому на месте "
-                        "происшествия точность обычно ниже, и вывод системы требует проверки "
-                        "экспертом.",
+                        "How do studies assess the reliability of automated footwear "
+                        "impression comparison, and what limits their results?",
+                        "Reliability is assessed on a set of impression pairs with known "
+                        "sources: researchers count correct matches and false positives. The "
+                        "results are limited by the quality and completeness of the impressions "
+                        "and by how representative the sample is: laboratory prints are cleaner "
+                        "than crime scene marks, so accuracy in casework is usually lower and "
+                        "the system's output must be verified by an examiner.",
                     ),
                 ),
-                "трасология",
+                "footwear impressions",
                 "limitations",
             ),
         ),
         DatasetKind(
             key="cases",
-            title="Ситуационные задачи",
+            title="Case problems",
             icon="🧩",
-            summary="фабула происшествия → разбор действий следователя и эксперта",
-            suits="методики расследования, материалы следственной и экспертной практики, "
-            "сборники задач, обзоры судебной практики",
-            fragment_hint=(
-                "описание действий на месте происшествия, тактики следственных действий, "
-                "методики расследования или примеры из практики"
-            ),
-            prompt=KindPrompt(
-                name="Case problems",
-                summary="an incident scenario → analysis of the investigator's and expert's "
-                "actions",
-                suits="investigation methodology, investigative and forensic casework "
-                "materials, collections of case problems, case-law reviews",
-                fragment_hint="actions at a crime scene, tactics of investigative actions, "
-                "investigation methodology or examples from practice",
-                unit="case problems",
-                fields="situation, task, solution, category",
-                task="""\
+            summary="an incident scenario → analysis of the investigator's and expert's actions",
+            suits="investigation methodology, investigative and forensic casework "
+            "materials, collections of case problems, case-law reviews",
+            fragment_hint="actions at a crime scene, tactics of investigative actions, "
+            "investigation methodology or examples from practice",
+            unit="case problems",
+            fields="situation, task, solution, category",
+            task="""\
 Create case problems whose solution follows from the fragment.
 - situation — a short realistic scenario (2–5 sentences): what happened, what was found \
 at the scene, what the investigation knows. The scenario may be fictional; refer to \
@@ -242,7 +204,6 @@ and collect them, which examination to commission and which questions to put to 
 expert, how to plan an interview.
 - solution — a detailed expert solution strictly based on the fragment: the sequence of \
 actions with justification, typical mistakes.""",
-            ),
             default_items=3,
             item_chars=1100,
             item_model=CaseItem,
@@ -252,43 +213,38 @@ actions with justification, typical mistakes.""",
             sample=Example(
                 (
                     (
-                        "Ночью из гаража гражданина А. похищен мотоцикл. Навесной замок на "
-                        "воротах сорван, рядом на рыхлом грунте видны объёмные следы обуви.\n\n"
-                        "Как зафиксировать и изъять следы обуви и какую экспертизу назначить?",
-                        "1. Сфотографировать следы по правилам масштабной съёмки: оптическая ось "
-                        "перпендикулярна плоскости следа, рядом — масштабная линейка.\n"
-                        "2. Описать в протоколе осмотра местоположение, форму, размеры и "
-                        "особенности рельефа подошвы.\n"
-                        "3. Удалить случайные предметы, не нарушая рельефа, и изготовить "
-                        "гипсовый слепок.\n"
-                        "4. Упаковать и опечатать слепок, получить обувь проверяемых лиц для "
-                        "сравнения.\n"
-                        "5. Назначить трасологическую экспертизу: не оставлен ли след обувью, "
-                        "изъятой у подозреваемого?",
+                        "A motorcycle was stolen overnight from Mr. A.'s garage. The padlock "
+                        "on the door was forced, and three-dimensional footwear impressions are "
+                        "visible in the soft soil nearby.\n\n"
+                        "How should the impressions be documented and recovered, and which "
+                        "examination should be requested?",
+                        "1. Photograph each impression with a scale, the camera axis "
+                        "perpendicular to the impression.\n"
+                        "2. Record the location, shape, dimensions and visible sole pattern in "
+                        "the scene notes.\n"
+                        "3. Remove loose debris without disturbing the impression and cast it "
+                        "with dental stone.\n"
+                        "4. Package and seal the cast; obtain suspects' footwear for comparison.\n"
+                        "5. Request a footwear examination: could the impression have been made "
+                        "by the shoes seized from the suspect?",
                     ),
                 ),
-                "осмотр места происшествия",
+                "crime scene examination",
                 "case",
             ),
         ),
         DatasetKind(
             key="instructions",
-            title="Инструкции и задания",
+            title="Instructions and tasks",
             icon="📋",
-            summary="«Составь план…», «Перечисли признаки…» → образцовое выполнение",
-            suits="методические рекомендации, наставления, инструкции, памятки, "
-            "руководства по производству экспертиз",
-            fragment_hint="порядок действий, алгоритмы, требования, перечни, правила оформления",
-            prompt=KindPrompt(
-                name="Instructions and tasks",
-                summary='"Draw up a plan…", "List the features…" → an exemplary response',
-                suits="guidelines, manuals, SOPs, protocols, handbooks on conducting "
-                "forensic examinations",
-                fragment_hint="sequences of actions, algorithms, requirements, checklists, "
-                "documentation rules",
-                unit="instruction tasks",
-                fields="instruction, response, category",
-                task="""\
+            summary='"Draw up a plan…", "List the features…" → an exemplary response',
+            suits="guidelines, manuals, SOPs, protocols, handbooks on conducting "
+            "forensic examinations",
+            fragment_hint="sequences of actions, algorithms, requirements, checklists, "
+            "documentation rules",
+            unit="instruction tasks",
+            fields="instruction, response, category",
+            task="""\
 Create tasks that an investigator, forensic expert or student might give to a forensic \
 AI assistant, together with an exemplary response to each.
 - instruction — an imperative request: "Draw up a list of…", "Describe the procedure \
@@ -296,7 +252,6 @@ for…", "List the features of…", "Draw up a crime scene examination plan for�
 "Formulate questions for the expert…", "Explain in simple terms…".
 - response — a high-quality response strictly based on the fragment, well structured \
 (lists, steps).""",
-            ),
             default_items=4,
             item_chars=800,
             item_model=InstructionItem,
@@ -306,40 +261,31 @@ for…", "List the features of…", "Draw up a crime scene examination plan for�
             sample=Example(
                 (
                     (
-                        "Составь перечень вопросов эксперту при назначении дактилоскопической "
-                        "экспертизы.",
-                        "1. Имеются ли на представленных предметах следы рук и пригодны ли они "
-                        "для идентификации личности?\n"
-                        "2. Какими пальцами или участками ладони оставлены следы?\n"
-                        "3. Не оставлены ли следы лицами, дактилокарты которых представлены на "
-                        "экспертизу?\n"
-                        "4. Не оставлены ли все следы одним и тем же лицом?",
+                        "Draw up a list of questions for the expert when requesting a "
+                        "fingerprint examination.",
+                        "1. Are there fingermarks on the submitted items, and are they suitable "
+                        "for identification?\n"
+                        "2. Which fingers or areas of the palm left the marks?\n"
+                        "3. Were the marks left by the persons whose reference prints are "
+                        "submitted?\n"
+                        "4. Were all the marks left by the same person?",
                     ),
                 ),
-                "дактилоскопия",
+                "fingerprints",
                 "instruction",
             ),
         ),
         DatasetKind(
             key="reasoning",
-            title="С рассуждением (CoT)",
+            title="Reasoning (CoT)",
             icon="🧠",
-            summary="вопрос → пошаговое рассуждение эксперта → вывод (для reasoning-моделей)",
-            suits="монографии, экспертные заключения, аналитические и дискуссионные статьи, "
-            "обзоры практики",
-            fragment_hint=(
-                "аргументация, анализ признаков, сравнение версий или методов, обоснование выводов"
-            ),
-            prompt=KindPrompt(
-                name="Reasoning (chain of thought)",
-                summary="a question → the expert's step-by-step reasoning → a conclusion",
-                suits="monographs, expert reports, analytical and discussion papers, "
-                "casework reviews",
-                fragment_hint="argumentation, analysis of features, comparison of hypotheses "
-                "or methods, justification of conclusions",
-                unit="reasoning questions",
-                fields="question, reasoning, answer, category",
-                task="""\
+            summary="a question → the expert's step-by-step reasoning → a conclusion",
+            suits="monographs, expert reports, analytical and discussion papers, casework reviews",
+            fragment_hint="argumentation, analysis of features, comparison of hypotheses "
+            "or methods, justification of conclusions",
+            unit="reasoning questions",
+            fields="question, reasoning, answer, category",
+            task="""\
 Create questions that require analysis rather than restating a definition: why a method \
 works, what conclusion follows from a combination of features, which hypothesis to put \
 forward, how to assess the reliability of a result, what to choose under specific \
@@ -347,7 +293,6 @@ conditions.
 - reasoning — the expert's step-by-step reasoning (3–7 steps) from the facts in the \
 fragment to the conclusion.
 - answer — the final answer (2–4 sentences).""",
-            ),
             default_items=3,
             item_chars=1200,
             item_model=ReasoningItem,
@@ -357,51 +302,39 @@ fragment to the conclusion.
             sample=Example(
                 (
                     (
-                        "На месте происшествия обнаружена дорожка следов: шаг укорочен, угол "
-                        "разворота стоп увеличен, линия ходьбы ломаная. Что можно предположить "
-                        "о человеке?",
-                        "Человек двигался медленно и неустойчиво — вероятно, нёс тяжёлый груз "
-                        "или находился в состоянии опьянения либо утомления. Выбрать версию "
-                        "помогут глубина отпечатков и сопутствующие следы.",
+                        "A trail of footprints at the scene shows shortened steps, an increased "
+                        "foot angle and an irregular walking line. What can be inferred about "
+                        "the person?",
+                        "The person moved slowly and unsteadily — probably carrying a heavy "
+                        "load or intoxicated or exhausted. The depth of the impressions and "
+                        "accompanying traces help choose between these hypotheses.",
                     ),
                 ),
-                "трасология",
+                "footwear impressions",
                 "reasoning",
-                "1. Укороченный шаг означает замедленное или затруднённое движение.\n"
-                "2. Увеличенный угол разворота стоп и ломаная линия ходьбы указывают на "
-                "неустойчивость.\n"
-                "3. Такая совокупность признаков характерна для переноски груза, опьянения "
-                "или утомления.\n"
-                "4. Различить версии можно по вдавленности следов и следам волочения.",
+                "1. Shortened steps indicate slow or impeded movement.\n"
+                "2. An increased foot angle and an irregular walking line indicate "
+                "instability.\n"
+                "3. This combination is typical of carrying a load, intoxication or fatigue.\n"
+                "4. The hypotheses can be distinguished by impression depth and drag marks.",
             ),
         ),
         DatasetKind(
             key="dialogue",
-            title="Диалоги",
+            title="Dialogues",
             icon="💬",
-            summary="многоходовая беседа: уточняющие вопросы пользователя и ответы ассистента",
-            suits="обзорные и научно-популярные тексты, лекции, учебные пособия с "
-            "последовательным изложением темы",
-            fragment_hint=(
-                "последовательное объяснение темы, которое естественно раскрывать уточняющими "
-                "вопросами"
-            ),
-            prompt=KindPrompt(
-                name="Dialogues",
-                summary="a multi-turn conversation: the user's follow-up questions and the "
-                "assistant's answers",
-                suits="review and popular-science texts, lectures, study guides that present "
-                "a topic step by step",
-                fragment_hint="a step-by-step explanation of a topic that naturally unfolds "
-                "through follow-up questions",
-                unit="dialogues",
-                fields="category, turns (an array of objects with the fields user and assistant)",
-                task="""\
+            summary="a multi-turn conversation: follow-up questions and the assistant's answers",
+            suits="review and popular-science texts, lectures, study guides that present "
+            "a topic step by step",
+            fragment_hint="a step-by-step explanation of a topic that naturally unfolds "
+            "through follow-up questions",
+            unit="dialogues",
+            fields="category, turns (an array of objects with the fields user and assistant)",
+            task="""\
 Create dialogues between a user (an investigator, forensic expert or student) and a \
 forensic AI assistant. Each dialogue has 2–4 exchanges (turns): each next user question \
 clarifies or builds on the previous answer. The assistant's answers are professional and \
 strictly based on the fragment.""",
-            ),
             default_items=2,
             item_chars=1800,
             item_model=DialogueItem,
@@ -411,42 +344,42 @@ strictly based on the fragment.""",
             sample=Example(
                 (
                     (
-                        "Чем объёмный след отличается от поверхностного?",
-                        "Объёмный след возникает, когда объект деформирует мягкую поверхность — "
-                        "грунт, снег, пластилин — и оставляет трёхмерный отпечаток. "
-                        "Поверхностный остаётся на твёрдой поверхности за счёт наслоения или "
-                        "отслоения вещества.",
+                        "What is the difference between a three-dimensional and a "
+                        "two-dimensional impression?",
+                        "A three-dimensional impression forms when an object deforms a soft "
+                        "surface such as soil, snow or clay. A two-dimensional impression is "
+                        "left on a hard surface when material is deposited or removed.",
                     ),
                     (
-                        "А как изъять объёмный след обуви на снегу?",
-                        "После масштабной фотосъёмки след опыляют тальком или тонким слоем "
-                        "сухого гипса, чтобы снизить нагрев при схватывании, заливают гипсовым "
-                        "раствором и после затвердения извлекают слепок.",
+                        "So how do you recover a footwear impression in snow?",
+                        "After photographing it with a scale, spray the impression with a "
+                        "snow wax or dust it lightly with dry casting material to limit heat "
+                        "from setting, then cast it and lift the cast once it has hardened.",
                     ),
                 ),
-                "трасология",
+                "footwear impressions",
                 "dialogue",
             ),
         ),
     )
 }
 
-AUTO_TITLE = "Авто — по документу"
+AUTO_TITLE = "Auto — per document"
 AUTO_ICON = "🔎"
 AUTO_SUMMARY = (
-    "Один датасет. Модель прочитает фрагменты из начала, середины и конца документа, "
-    "определит его жанр (статья, исследование, учебник, методичка…) и выберет один тип "
-    "датасета для всего документа."
+    "One dataset. The model reads fragments from the beginning, middle and end of the "
+    "document, identifies its genre (article, study, textbook, guideline…) and picks one "
+    "dataset type for the whole document."
 )
 
-MIXED_TITLE = "Авто — по фрагментам"
+MIXED_TITLE = "Auto — per fragment"
 MIXED_ICON = "🔀"
 MIXED_SUMMARY = (
-    "Несколько датасетов. Для каждого фрагмента модель сама решает, какие типы примеров ему "
-    "подходят (определения → вопрос-ответ, порядок действий → инструкции, практика → "
-    "ситуационные задачи…), и раскладывает примеры по отдельным файлам — по одному на тип."
+    "Several datasets. For each fragment the model decides which example types fit it "
+    "(definitions → question–answer, procedures → instructions, casework → case problems…) "
+    "and sorts the examples into separate files, one per type."
 )
-MIXED_DEFAULT_ITEMS = 5
+MIXED_DEFAULT_ITEMS = 3
 MIXED_MAX_KINDS = 2
 # Поле selected идёт первым: модель сначала выбирает типы, потом пишет примеры. Схема
 # ограничивает выбор двумя типами, а примеры невыбранных типов программа отбрасывает.

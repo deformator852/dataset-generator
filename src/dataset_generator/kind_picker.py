@@ -36,12 +36,12 @@ def describe_example(example: Example) -> Text:
     for number, (user, assistant) in enumerate(example.turns):
         if number:
             text.append("\n")
-        text.append("Пользователь: ", style="bold cyan")
+        text.append("User: ", style="bold cyan")
         text.append(f"{user}\n")
         if example.reasoning and number == len(example.turns) - 1:
-            text.append("Рассуждение: ", style="bold yellow")
+            text.append("Reasoning: ", style="bold yellow")
             text.append(f"{example.reasoning}\n", style="italic")
-        text.append("Ассистент: ", style="bold green")
+        text.append("Assistant: ", style="bold green")
         text.append(f"{assistant}\n")
     return text
 
@@ -68,7 +68,7 @@ class KindPicker(ModalScreen[tuple[str, str] | None]):
     KindPicker Button { margin-left: 1; }
     """
 
-    BINDINGS: ClassVar[list[Binding]] = [Binding("escape", "cancel", "Отмена")]
+    BINDINGS: ClassVar[list[Binding]] = [Binding("escape", "cancel", "Cancel")]
 
     def __init__(self, files: list[Path], settings: Settings) -> None:
         super().__init__()
@@ -78,20 +78,22 @@ class KindPicker(ModalScreen[tuple[str, str] | None]):
         self.dataset_format = settings.dataset_format
 
     def compose(self) -> ComposeResult:
-        name = f"«{self.files[0].name}»"
+        name = f'"{self.files[0].name}"'
         if len(self.files) > 1:
-            name += f" и ещё {len(self.files) - 1} файл(ов)"
+            name += f" and {len(self.files) - 1} more file(s)"
         options = [
             Option(
                 self._option_prompt(
                     MIXED_ICON,
                     MIXED_TITLE,
-                    "рекомендуется: несколько датасетов, тип у каждого фрагмента свой",
+                    "recommended: several datasets, a type for each fragment",
                 ),
                 id=MIXED,
             ),
             Option(
-                self._option_prompt(AUTO_ICON, AUTO_TITLE, "один датасет, тип на весь документ"),
+                self._option_prompt(
+                    AUTO_ICON, AUTO_TITLE, "one dataset, one type for the whole document"
+                ),
                 id=AUTO,
             ),
         ]
@@ -100,25 +102,25 @@ class KindPicker(ModalScreen[tuple[str, str] | None]):
             for kind in KINDS.values()
         ]
         with Vertical(id="dialog"):
-            yield Label(f"Какой датасет сделать из {name}?", id="title")
+            yield Label(f"Which dataset should be built from {name}?", id="title")
             language = (
-                "Язык датасета определится автоматически — как у источника."
+                "The dataset language is detected automatically from the source."
                 if self.settings.language == "auto"
-                else f"Язык датасета: {self.settings.language}."
+                else f"Dataset language: {self.settings.language}."
             )
-            yield Label(f"{language} ↑↓ — тип, Enter — начать, Esc — отмена.", id="hint")
+            yield Label(f"{language} ↑↓ — type, Enter — start, Esc — cancel.", id="hint")
             with Horizontal(id="choice"):
                 yield OptionList(*options, id="kinds")
                 with VerticalScroll(id="preview"):
                     yield Static(id="preview-body")
             with Horizontal(id="bottom"):
-                yield Label("Формат записи:", id="format-label")
+                yield Label("Record format:", id="format-label")
                 with RadioSet(id="formats"):
                     for fmt in DATASET_FORMATS:
                         yield RadioButton(fmt, value=fmt == self.dataset_format, name=fmt)
                 yield Static(id="spacer")
-                yield Button("Отмена", id="cancel")
-                yield Button("Начать ▶", id="start", variant="primary")
+                yield Button("Cancel", id="cancel")
+                yield Button("Start ▶", id="start", variant="primary")
 
     def on_mount(self) -> None:
         kinds = self.query_one("#kinds", OptionList)
@@ -126,7 +128,7 @@ class KindPicker(ModalScreen[tuple[str, str] | None]):
         kinds.focus()
         # Пример листается колесом мыши, а Tab сразу переходит к выбору формата.
         self.query_one("#preview").can_focus = False
-        self.query_one("#preview").border_title = "Пример"
+        self.query_one("#preview").border_title = "Example"
         self._update_preview()
 
     @staticmethod
@@ -171,22 +173,22 @@ class KindPicker(ModalScreen[tuple[str, str] | None]):
                 Text(f"{MIXED_ICON} {MIXED_TITLE}", style="bold"),
                 Text(MIXED_SUMMARY),
                 Text(""),
-                Text("Какой фрагмент в какой датасет попадёт:", style="bold"),
+                Text("Which fragments go to which dataset:", style="bold"),
             ]
             parts += [
                 Text.assemble(
                     ("  • ", "dim"),
                     (f"{kind.icon} {kind.title}", "bold"),
-                    f" — если во фрагменте {kind.fragment_hint}\n",
+                    f" — if the fragment contains {kind.fragment_hint}\n",
                     (f"    → datasets/{name}.mixed.{kind.key}.jsonl", "cyan"),
                 )
                 for kind in KINDS.values()
             ]
             parts.append(
                 Text(
-                    "\nФайлы появляются только для тех типов, которые модель реально выбрала. "
-                    "Примеры каждого типа — в списке слева. Запрос к модели длиннее обычного, "
-                    "поэтому фрагмент обрабатывается немного дольше.",
+                    "\nFiles are created only for the types the model actually picks. See the list "
+                    "on the left for examples of each type. The request to the model is longer "
+                    "than usual, so each fragment takes a bit more time.",
                     style="dim",
                 )
             )
@@ -197,7 +199,7 @@ class KindPicker(ModalScreen[tuple[str, str] | None]):
                 Text(f"{AUTO_ICON} {AUTO_TITLE}", style="bold"),
                 Text(AUTO_SUMMARY),
                 Text(""),
-                Text("Что выберет модель в зависимости от источника:", style="bold"),
+                Text("What the model picks depending on the source:", style="bold"),
             ]
             parts += [
                 Text.assemble(
@@ -207,8 +209,8 @@ class KindPicker(ModalScreen[tuple[str, str] | None]):
             ]
             parts.append(
                 Text(
-                    "\nВыбор и его обоснование появятся в журнале. Решение "
-                    "запоминается: при повторном запуске анализ не повторяется.",
+                    "\nThe choice and its reasoning appear in the log. The decision is "
+                    "remembered: the analysis is not repeated on the next run.",
                     style="dim",
                 )
             )
@@ -220,10 +222,10 @@ class KindPicker(ModalScreen[tuple[str, str] | None]):
         return Group(
             Text(f"{kind.icon} {kind.title}", style="bold"),
             Text(kind.summary),
-            Text.assemble(("Подходит для: ", "bold"), kind.suits),
+            Text.assemble(("Best for: ", "bold"), kind.suits),
             Text(""),
             describe_example(kind.sample),
-            Text(f"Так выглядит строка датасета ({self.dataset_format}, .jsonl):", style="bold"),
+            Text(f"A dataset line looks like this ({self.dataset_format}, .jsonl):", style="bold"),
             Syntax(
                 record_json, "json", theme="ansi_dark", word_wrap=True, background_color="default"
             ),

@@ -48,10 +48,10 @@ class SystemInfo:
 
     @property
     def label(self) -> str:
-        ram = f"ОЗУ {self.ram_total_gb:.0f} ГБ"
+        ram = f"{self.ram_total_gb:.0f} GB RAM"
         if self.ram_free_gb:
-            ram += f" (свободно {self.ram_free_gb:.0f})"
-        return f"{self.cpu} · {self.threads} потоков · {ram}"
+            ram += f" ({self.ram_free_gb:.0f} free)"
+        return f"{self.cpu} · {self.threads} threads · {ram}"
 
 
 @dataclass(slots=True, frozen=True)
@@ -65,12 +65,12 @@ class Speed:
     @property
     def device(self) -> str:
         if self.gpu_share is None:
-            return "устройство неизвестно"
+            return "device unknown"
         if self.gpu_share >= 0.99:
-            return "модель на GPU"
+            return "model on GPU"
         if self.gpu_share <= 0.01:
-            return "модель на CPU"
-        return f"модель на GPU на {self.gpu_share:.0%}, остальное на CPU"
+            return "model on CPU"
+        return f"model {self.gpu_share:.0%} on GPU, the rest on CPU"
 
 
 @dataclass(slots=True, frozen=True)
@@ -91,7 +91,7 @@ class Estimate:
     def label(self) -> str:
         return (
             f"≈ {format_duration(self.seconds)} "
-            f"(от {format_duration(self.low)} до {format_duration(self.high)})"
+            f"({format_duration(self.low)} to {format_duration(self.high)})"
         )
 
 
@@ -170,15 +170,15 @@ class Eta:
 def format_duration(seconds: float) -> str:
     seconds = int(seconds)
     if seconds < 60:
-        return f"{seconds} с"
+        return f"{seconds} s"
     minutes = seconds // 60
     if minutes < 60:
-        return f"{minutes} мин"
+        return f"{minutes} min"
     hours, minutes = divmod(minutes, 60)
     if hours < 24:
-        return f"{hours} ч {minutes} мин" if minutes else f"{hours} ч"
+        return f"{hours} h {minutes} min" if minutes else f"{hours} h"
     days, hours = divmod(hours, 24)
-    return f"{days} д {hours} ч" if hours else f"{days} д"
+    return f"{days} d {hours} h" if hours else f"{days} d"
 
 
 async def _benchmark(

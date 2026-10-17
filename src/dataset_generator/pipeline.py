@@ -121,7 +121,7 @@ async def process_file(job: Job, settings: Settings, client: AsyncClient) -> Asy
             except GenerationError as exc:
                 error = str(exc)
             except ConnectionError as exc:
-                yield FileFailed(path, f"потеряно соединение с Ollama: {exc}")
+                yield FileFailed(path, f"lost connection to Ollama: {exc}")
                 return
         if analysis:
             run = analysis.kind
@@ -148,7 +148,7 @@ async def process_file(job: Job, settings: Settings, client: AsyncClient) -> Asy
             async for event in _estimate(path, run, language, chunks, remaining, settings, client):
                 yield event
         except ConnectionError as exc:
-            yield FileFailed(path, f"потеряно соединение с Ollama: {exc}")
+            yield FileFailed(path, f"lost connection to Ollama: {exc}")
             return
 
     failed = 0
@@ -183,7 +183,7 @@ async def process_file(job: Job, settings: Settings, client: AsyncClient) -> Asy
                 else:
                     yield ChunkFailed(index, str(exc), time.monotonic() - started)
             except ConnectionError as exc:
-                yield FileFailed(path, f"потеряно соединение с Ollama: {exc}")
+                yield FileFailed(path, f"lost connection to Ollama: {exc}")
                 return
 
         if generation is None:

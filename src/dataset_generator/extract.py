@@ -60,13 +60,11 @@ def extract_text(path: Path) -> str:
     elif suffix == ".zip":
         text = _extract_zip(path)
     else:
-        raise ExtractionError(f"неподдерживаемый формат «{suffix}»")
+        raise ExtractionError(f'unsupported format "{suffix}"')
 
     text = clean_text(text)
     if not text:
-        raise ExtractionError(
-            "в файле нет текстового слоя (вероятно, это скан — сначала распознайте его OCR)"
-        )
+        raise ExtractionError("the file has no text layer (probably a scan — run OCR on it first)")
     return text
 
 
@@ -87,10 +85,10 @@ def _extract_mupdf(
     try:
         doc = pymupdf.open(path) if path else pymupdf.open(stream=data, filetype=filetype)
     except Exception as exc:
-        raise ExtractionError(f"не удалось открыть документ: {exc}") from exc
+        raise ExtractionError(f"cannot open the document: {exc}") from exc
     with doc:
         if doc.needs_pass:
-            raise ExtractionError("документ защищён паролем")
+            raise ExtractionError("the document is password-protected")
         pages = [
             [
                 text
@@ -158,7 +156,7 @@ def _extract_docx(path: Path) -> str:
 def _extract_djvu(path: Path) -> str:
     djvutxt = shutil.which("djvutxt")
     if not djvutxt:
-        raise ExtractionError("для DjVu нужна утилита djvutxt: sudo dnf install djvulibre")
+        raise ExtractionError("DjVu needs the djvutxt tool: sudo dnf install djvulibre")
     result = subprocess.run([djvutxt, str(path)], capture_output=True, check=False)
     if result.returncode != 0:
         raise ExtractionError(f"djvutxt: {result.stderr.decode(errors='replace').strip()}")
@@ -174,4 +172,4 @@ def _extract_zip(path: Path) -> str:
                 return _extract_mupdf(data=archive.read(name), filetype=suffix.lstrip("."))
             if suffix in TEXT_SUFFIXES:
                 return _decode(archive.read(name))
-    raise ExtractionError("в архиве нет поддерживаемых файлов")
+    raise ExtractionError("the archive contains no supported files")

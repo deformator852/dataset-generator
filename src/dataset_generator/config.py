@@ -6,7 +6,9 @@ DATASET_FORMATS = ("chatml", "alpaca", "sharegpt")
 
 @dataclass(slots=True)
 class Settings:
-    model: str = "qwen3:8b"
+    # MoE-модель: 30B параметров, но на токен работают ~3B — на CPU она быстрее Qwen3-8B
+    # и пишет заметно лучше. Нужно ~20 ГБ ОЗУ; на слабом ПК — `-m qwen3:8b`.
+    model: str = "qwen3:30b-a3b-instruct-2507-q4_K_M"
     # None — клиент Ollama сам возьмёт OLLAMA_HOST или http://localhost:11434
     host: str | None = None
     input_dir: Path = Path("input")
@@ -23,8 +25,14 @@ class Settings:
     max_items: int | None = None
     num_ctx: int = 16384
     num_predict: int = 8192
-    think: bool = True
+    # Мышление по умолчанию выключено: на CPU оно почти удваивает время, а для примеров
+    # по готовому тексту даёт немного. Включается флагом --think или клавишей F2.
+    think: bool = False
     retries: int = 2
+    # None — как решит Ollama (обычно только производительные ядра)
+    threads: int | None = None
+    # Заполняется при проверке модели: умеет ли она режим мышления
+    think_supported: bool = True
 
     def sampling_options(self, think: bool) -> dict[str, float | int]:
         # Рекомендованные Qwen параметры сэмплинга для режимов с мышлением и без.
@@ -32,4 +40,7 @@ class Settings:
             sampling = {"temperature": 0.6, "top_p": 0.95, "top_k": 20}
         else:
             sampling = {"temperature": 0.7, "top_p": 0.8, "top_k": 20}
-        return {**sampling, "num_ctx": self.num_ctx, "num_predict": self.num_predict}
+        options = {**sampling, "num_ctx": self.num_ctx, "num_predict": self.num_predict}
+        if self.threads:
+            options["num_thread"] = self.threads
+        return options
