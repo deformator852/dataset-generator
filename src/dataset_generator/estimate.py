@@ -1,18 +1,18 @@
-"""Прогноз времени и стоимости обработки и оставшееся время (ETA).
+"""Time and cost estimates and the remaining time (ETA).
 
-Прогноз строится по объёму текста, тарифу DeepSeek и типичной скорости API, а по ходу
-работы ETA уточняется по фактическому времени фрагментов.
+The estimate is based on the amount of text, DeepSeek pricing and typical API speed;
+while the work runs, the ETA is refined from the actual time per fragment.
 """
 
 from dataclasses import dataclass
 
 from dataset_generator.pricing import Usage, cost
 
-# Служебный текст запроса (шаблон пользовательского сообщения), символов.
+# Request boilerplate (the user message template), characters.
 USER_TEMPLATE_CHARS = 200
-# Разброс прогноза: длина размышлений и ответов сильно гуляет.
+# Estimate spread: the length of thinking and answers varies a lot.
 LOW_FACTOR, HIGH_FACTOR = 0.6, 1.7
-# Осторожные допущения о DeepSeek Flash — ETA уточнит их по факту.
+# Conservative assumptions about DeepSeek Flash; the ETA refines them in practice.
 API_FIRST_TOKEN_SECONDS = 2.0
 API_TOKENS_PER_SECOND = 50.0
 API_THINK_TOKENS = {"low": 600, "high": 2500, "max": 6000}
@@ -51,10 +51,10 @@ def estimate_api(
     parallel: int,
     model: str,
 ) -> tuple[Estimate, float]:
-    """Прогноз времени и стоимости для облачного API (DeepSeek).
+    """Time and cost estimate for the API (DeepSeek).
 
-    Системный промпт одинаков во всех запросах: DeepSeek кеширует его, и после первой
-    волны параллельных запросов он оплачивается по тарифу «cache hit».
+    The system prompt is the same in every request: DeepSeek caches it, and after the
+    first wave of parallel requests it is billed at the cache-hit rate.
     """
     if not chunks:
         return Estimate(0, 0.0, 0.0), 0.0
@@ -66,7 +66,7 @@ def estimate_api(
     estimate = Estimate(len(chunks), per_chunk, per_chunk * waves)
 
     system_tokens = system_chars / API_CHARS_PER_TOKEN
-    cold = min(parallel, len(chunks))  # первая волна ещё не попадает в кеш
+    cold = min(parallel, len(chunks))  # the first wave does not hit the cache yet
     usage = Usage(
         cache_hit=int(system_tokens * (len(chunks) - cold)),
         cache_miss=int(
@@ -79,10 +79,10 @@ def estimate_api(
 
 
 class Eta:
-    """Оставшееся время: прогноз уточняется по фактическому времени фрагментов.
+    """Remaining time: the estimate is refined from the actual time per fragment.
 
-    При параллельной обработке фрагменты идут «волнами», поэтому время делится на
-    число одновременных запросов.
+    With parallel processing, fragments go in waves, so the time is divided by the
+    number of concurrent requests.
     """
 
     def __init__(self, remaining: int, prior_per_chunk: float, parallel: int = 1) -> None:

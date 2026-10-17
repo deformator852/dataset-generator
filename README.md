@@ -1,151 +1,150 @@
-# Dataset Generator — датасеты по криминалистике
+# Dataset Generator — forensic science datasets
 
-Программа превращает документы по криминалистике в обучающие датасеты для ИИ-ассистента
-по криминалистике и судебной экспертизе. Источником может быть что угодно: научные статьи,
-исследования, диссертации и авторефераты, отчёты, экспертные заключения, обзоры практики,
-методички, учебники, книги — в форматах PDF, DOCX, EPUB, FB2, DjVu, TXT, HTML и др.
+The program turns documents on forensic science into training datasets for an AI assistant for
+criminalistics and forensic examination. The source can be anything: research articles, studies,
+dissertations and theses, reports, expert reports, casework reviews, guidelines, textbooks,
+books — in PDF, DOCX, EPUB, FB2, DjVu, TXT, HTML and other formats.
 
-Текст обрабатывает модель **DeepSeek V4.1-Flash через API**: книга на 300 страниц — около
-10–20 минут и ~$0,1–0,3.
+The text is processed by **DeepSeek V4.1-Flash through the API**: a 300-page book takes about
+10–20 minutes and costs ~$0.1–0.3.
 
-Интерфейс программы и промпты для модели — на английском.
+Features:
 
-Возможности:
+- a terminal interface (TUI) that shows in real time how the model "thinks";
+- several dataset types to choose from, or the model picks the type itself;
+- a separate dataset type for analysing research studies;
+- the dataset language follows the language of the source;
+- reference lists and running heads (journal name, DOI, page numbers) are removed
+  automatically, so the model spends no time or money on them;
+- parallel API requests, time and cost estimates, and spending tracking;
+- resuming from where processing stopped, protection against duplicates;
+- `chatml`, `alpaca` and `sharegpt` record formats in JSON Lines.
 
-- терминальный интерфейс (TUI), в котором в реальном времени видно, как модель «думает»;
-- несколько типов датасетов на выбор — или модель подбирает тип сама;
-- отдельный тип датасета для разбора научных исследований;
-- язык датасета определяется по языку источника;
-- списки литературы и колонтитулы (название журнала, DOI, номера страниц) вырезаются
-  автоматически — модель не тратит на них время и деньги;
-- параллельные запросы к API, прогноз времени и стоимости, учёт потраченного;
-- возобновление с места остановки, защита от дубликатов;
-- форматы записей `chatml`, `alpaca`, `sharegpt` в JSON Lines.
+## Installation
 
-## Установка
-
-Нужны Python 3.12+ и [uv](https://docs.astral.sh/uv/).
+You need Python 3.12+ and [uv](https://docs.astral.sh/uv/).
 
 ```bash
-uv sync                                  # зависимости проекта
+uv sync                                  # project dependencies
 ```
 
-Зарегистрируйтесь на [platform.deepseek.com](https://platform.deepseek.com),
-пополните баланс (оплата вперёд, на книгу уходят центы) и создайте API-ключ. Сохраните его в
-переменной окружения — например, добавьте строку в `~/.zshrc`:
+Sign up at [platform.deepseek.com](https://platform.deepseek.com), top up your balance (prepaid;
+a book costs cents) and create an API key. Store it in an environment variable — for example,
+add this line to `~/.zshrc`:
 
 ```bash
 export DEEPSEEK_API_KEY="sk-..."
 ```
 
-Для DjVu дополнительно нужен `djvulibre` (`sudo dnf install djvulibre`).
+DjVu files additionally need `djvulibre` (`sudo dnf install djvulibre`).
 
-## Быстрый старт
+## Quick start
 
-1. Положите документы в папку `input/`.
-2. Запустите `uv run dataset-generator`.
-3. Введите имя файла (или путь к файлу/папке) и нажмите Enter.
-4. Выберите тип датасета в появившемся окне и нажмите «Start».
-5. Готовые датасеты появятся в папке `datasets/`.
+1. Put your documents into the `input/` folder.
+2. Run `uv run dataset-generator`.
+3. Type a file name (or a path to a file or folder) and press Enter.
+4. Choose a dataset type in the window that opens and press "Start".
+5. The finished datasets appear in the `datasets/` folder.
 
-## Модель и стоимость
+## Model and cost
 
-**Модель — `deepseek-flash` (V4.1-Flash).** Для примеров по готовому тексту её хватает с
-запасом, а `deepseek-v4-pro` дороже примерно в 4 раза (`-m deepseek-v4-pro`, если нужна
-максимальная точность). Мышление включено с глубиной `low`: стоит копейки, а модель точнее
-выбирает типы и реже ошибается. Фрагменты отправляются по 16 одновременно. Текст источника
-уходит на серверы DeepSeek.
+**The model is `deepseek-flash` (V4.1-Flash).** It is more than enough for examples based on a
+given text, while `deepseek-v4-pro` costs about 4 times as much (`-m deepseek-v4-pro` if you need
+maximum accuracy). Thinking is on with `low` depth: it costs very little, and the model picks
+types more accurately and makes fewer mistakes. Fragments are sent 16 at a time. The source text
+is sent to DeepSeek's servers.
 
-**Тарифы DeepSeek** (за 1 млн токенов, днём / вне пика): Flash — вход $0,30 / $0,15,
-кешированный вход $0,006 / $0,003, выход $1,20 / $0,60. Пиковые часы — пн–пт 01:00–04:00 и
-06:00–10:00 UTC (04:00–07:00 и 09:00–13:00 по Москве), в остальное время и в выходные всё
-вдвое дешевле. Таблица цен — в `pricing.py`; если DeepSeek поменяет тарифы, поправьте её.
+**DeepSeek pricing** (per 1M tokens, peak / off-peak): Flash — input $0.30 / $0.15, cached input
+$0.006 / $0.003, output $1.20 / $0.60. Peak hours are Mon–Fri 01:00–04:00 and 06:00–10:00 UTC
+(04:00–07:00 and 09:00–13:00 Moscow time); at all other times and on weekends everything is half
+price. The price table is in `pricing.py`; update it if DeepSeek changes its prices.
 
-**Об использовании ответов для обучения.** Насколько известно, условия DeepSeek разрешают
-использовать ответы модели для обучения других моделей. Перед публикацией или коммерческим
-использованием датасета проверьте актуальные условия.
+**Using model outputs for training.** As far as is known, DeepSeek's terms allow using model
+outputs to train other models. Check the current terms before publishing the dataset or using it
+commercially.
 
-## Интерфейс
+## Interface
 
 ```
-┌ поле ввода: имя файла или путь ──────────────────────────────────────────┐
-├ Settings ──────────┬ 🧠 Model thinking (поток в реальном времени) ───────┤
+┌ input field: file name or path ──────────────────────────────────────────┐
+├ Settings ──────────┬ 🧠 Model thinking (live stream) ────────────────────┤
 ├ Queue ─────────────┤                                                     │
-├ прогресс ──────────┼ 📝 Model response (JSON) ───────────────────────────┤
+├ progress bar ──────┼ 📝 Model response (JSON) ───────────────────────────┤
 ├ Progress and time ─┤                                                     │
-├ Model and cost ────┼ 📚 Dataset and log: готовые примеры, события ───────┤
+├ Model and cost ────┼ 📚 Dataset and log: finished examples, events ──────┤
 └────────────────────┴─────────────────────────────────────────────────────┘
 ```
 
-Потоки размышлений и ответа показываются для одного фрагмента («+15 in parallel» — сколько
-ещё считается в фоне), готовые примеры всех фрагментов идут в журнал. В панели «Model and
-cost» — модель, текущий тариф (пик или нет) и сколько потрачено за сеанс.
+The thinking and response streams are shown for one fragment ("+15 in parallel" is how many more
+are being processed in the background); finished examples of all fragments go to the log. The
+"Model and cost" panel shows the model, the current tariff (peak or off-peak) and how much has
+been spent in this session.
 
-| Клавиша | Действие |
+| Key | Action |
 |---|---|
-| Enter | добавить файл или папку в очередь (пустой Enter — перезапустить очередь) |
-| → | принять автодополнение пути |
-| ↑ ↓ / Tab / Enter / Esc | выбор типа и формата в окне выбора |
-| F2 | включить/выключить мышление модели (со следующего фрагмента) |
-| F3 | остановить обработку (прогресс сохраняется) |
-| F4 | очистить панели |
-| Ctrl+Q | выход |
+| Enter | add a file or folder to the queue (an empty Enter restarts the queue) |
+| → | accept path autocompletion |
+| ↑ ↓ / Tab / Enter / Esc | choose the type and format in the picker |
+| F2 | turn model thinking on/off (from the next fragment) |
+| F3 | stop processing (progress is saved) |
+| F4 | clear the panels |
+| Ctrl+Q | quit |
 
-Файлы можно добавлять прямо во время работы — они встают в очередь, у каждого свой тип.
+Files can be added while processing is running — they join the queue, each with its own type.
 
-## Типы датасетов
+## Dataset types
 
-В окне выбора справа показан пример для каждого типа и то, как выглядит строка датасета.
+The picker shows an example for each type on the right, along with what a dataset line looks
+like.
 
-| Тип | Ключ | Что получится | Лучше всего для |
+| Type | Key | What you get | Best for |
 |---|---|---|---|
-| 🔀 **Auto — per fragment** (рекомендуется) | `mixed` | модель для каждого фрагмента сама выбирает 1–2 подходящих типа; примеры раскладываются по отдельным файлам — по одному на тип | любых документов, особенно разнородных |
-| 🔎 Auto — per document | `auto` | модель читает начало, середину и конец документа (у короткой статьи — весь текст), определяет жанр и выбирает один тип на весь документ | однородных документов |
-| ❓ Question–answer | `qa` | определения, объяснения, классификации, процедуры, правовые вопросы | учебники, лекции, справочники, обзорные статьи |
-| 🔬 Research analysis | `research` | цель, методы и выборка, результаты, ограничения и практическое значение исследования | научные статьи, диссертации, отчёты об экспериментах |
-| 🧩 Case problems | `cases` | фабула происшествия → разбор действий следователя и эксперта | методики расследования, практика |
-| 📋 Instructions and tasks | `instructions` | «Draw up a plan…», «List the features…» → образцовое выполнение | методички, наставления, руководства |
-| 🧠 Reasoning (CoT) | `reasoning` | вопрос → пошаговое рассуждение в `<think>…</think>` → вывод | монографии, экспертные заключения, аналитические статьи |
-| 💬 Dialogues | `dialogue` | беседа из 2–4 реплик с уточняющими вопросами | обзорные тексты, учебные пособия |
+| 🔀 **Auto — per fragment** (recommended) | `mixed` | for each fragment the model picks 1–2 suitable types; examples are sorted into separate files, one per type | any documents, especially mixed ones |
+| 🔎 Auto — per document | `auto` | the model reads the beginning, middle and end of the document (the whole text for a short article), identifies its genre and picks one type for the whole document | uniform documents |
+| ❓ Question–answer | `qa` | definitions, explanations, classifications, procedures, legal questions | textbooks, lectures, reference works, review articles |
+| 🔬 Research analysis | `research` | aim, methods and sample, results, limitations and practical value of a study | research articles, dissertations, experiment reports |
+| 🧩 Case problems | `cases` | an incident scenario → analysis of the investigator's and expert's actions | investigation methodology, casework |
+| 📋 Instructions and tasks | `instructions` | "Draw up a plan…", "List the features…" → an exemplary response | guidelines, manuals, SOPs |
+| 🧠 Reasoning (CoT) | `reasoning` | a question → step-by-step reasoning in `<think>…</think>` → a conclusion | monographs, expert reports, analytical papers |
+| 💬 Dialogues | `dialogue` | a conversation of 2–4 exchanges with follow-up questions | review texts, study guides |
 
-Выбор режима «Auto — per document» запоминается: при повторном запуске документ не анализируется
-заново.
+The choice made by "Auto — per document" is remembered: the document is not analysed again on
+the next run.
 
-**Язык.** Промпты для модели написаны на английском. Язык самих примеров определяется
-автоматически по тексту источника: английская статья даёт английский датасет, русская —
-русский. System-промпт в примерах тоже на языке источника. Задать язык вручную:
-`--language en`.
+**Language.** Prompts for the model are written in English. The language of the examples is
+detected automatically from the source text: an English article gives an English dataset, a
+Russian one gives a Russian dataset. The system prompt in the examples is in the source language
+too. To set the language manually: `--language en`.
 
-**Научные материалы.** Результаты конкретного исследования попадают в датасет как результаты
-исследования — с объектом, выборкой и методом, а не как общепризнанный факт. Авторская позиция
-подаётся как одна из точек зрения, ссылки вида `[12]` в примеры не переносятся. Аннотации,
-ключевые слова, сведения об авторах и благодарности модель пропускает.
+**Research materials.** Findings of a specific study go into the dataset as findings of that
+study — with its object, sample and method — rather than as established facts. An author's
+position is presented as one viewpoint, and citation markers like `[12]` are not carried over.
+Abstracts, keywords, author information and acknowledgements are skipped by the model.
 
-**Проверка ответов.** У DeepSeek нет строгой JSON-схемы: схема передаётся в промпте, а
-программа проверяет каждый ответ и при ошибке повторяет запрос (последняя попытка — без
-мышления).
+**Response checks.** DeepSeek has no strict JSON schema: the schema is passed in the prompt, and
+the program checks every response and retries the request on errors (the last attempt runs
+without thinking).
 
-## Время и стоимость
+## Time and cost
 
-Перед первым фрагментом в журнале появляется прогноз времени и стоимости — по объёму текста,
-тарифу (с учётом пиковых часов) и числу параллельных запросов. В панели «Progress and time»
-видно, сколько уже потрачено («Cost: $0.04 of ≈ $0.21»), с учётом кеша промпта и неудачных
-попыток; «Time left» уточняется по фактическому времени фрагментов.
+Before the first fragment, the log shows a time and cost estimate based on the amount of text,
+the tariff (including peak hours) and the number of parallel requests. The "Progress and time"
+panel shows how much has been spent so far ("Cost: $0.04 of ≈ $0.21"), including prompt caching
+and failed attempts; "Time left" is refined from the actual time per fragment.
 
-## Результат
+## Output
 
-Все файлы пишутся в `datasets/` в формате JSON Lines (одна строка — один пример):
+All files are written to `datasets/` in JSON Lines format (one line is one example):
 
-| Режим | Файлы |
+| Mode | Files |
 |---|---|
-| конкретный тип или «Auto — per document» | `<файл>.<тип>.jsonl`, например `article.pdf.research.jsonl` |
-| «Auto — per fragment» | `<файл>.mixed.<тип>.jsonl` — по файлу на каждый выбранный моделью тип |
+| a specific type or "Auto — per document" | `<file>.<type>.jsonl`, e.g. `article.pdf.research.jsonl` |
+| "Auto — per fragment" | `<file>.mixed.<type>.jsonl` — one file per type the model picked |
 
-Рядом лежит `*.state.json` — служебный файл для возобновления. При параллельной обработке
-примеры пишутся в порядке готовности фрагментов; номер фрагмента — в `metadata.chunk`.
+Next to them is `*.state.json`, a service file used for resuming. With parallel processing,
+examples are written in the order fragments finish; the fragment index is in `metadata.chunk`.
 
-Формат записи выбирается в окне выбора или флагом `--format`. Пример `chatml`
-(по умолчанию):
+The record format is chosen in the picker or with `--format`. A `chatml` example (the default):
 
 ```json
 {"messages": [
@@ -157,14 +156,14 @@ cost» — модель, текущий тариф (пик или нет) и с�
               "type": "procedure", "language": "en", "model": "deepseek-flash"}}
 ```
 
-- `alpaca` — `instruction`, `input`, `output`, `system`, а у диалогов ещё `history`;
-- `sharegpt` — `conversations` из реплик `system` / `human` / `gpt`.
+- `alpaca` — `instruction`, `input`, `output`, `system`, plus `history` for dialogues;
+- `sharegpt` — `conversations` made of `system` / `human` / `gpt` turns.
 
-Такие файлы понимают Hugging Face `datasets`, TRL, Unsloth, Axolotl, LLaMA-Factory:
+These files work with Hugging Face `datasets`, TRL, Unsloth, Axolotl and LLaMA-Factory:
 
 ```bash
-cat datasets/*.jsonl > forensics.jsonl          # всё вместе
-cat datasets/*.qa.jsonl > forensics-qa.jsonl    # только «вопрос — ответ» из всех файлов
+cat datasets/*.jsonl > forensics.jsonl          # everything together
+cat datasets/*.qa.jsonl > forensics-qa.jsonl    # only question–answer from all files
 ```
 
 ```python
@@ -173,93 +172,94 @@ from datasets import load_dataset
 ds = load_dataset("json", data_files="forensics.jsonl", split="train")
 ```
 
-**Возобновление.** Если работа прервалась (F3, Ctrl+Q, Ctrl+C, выключение ПК, кончился баланс),
-добавьте тот же файл с тем же типом снова — обработка продолжится с места остановки, уже
-оплаченные фрагменты повторно не отправляются. Если изменился сам файл или настройки нарезки,
-формата или языка, старый датасет не удаляется, а переименовывается в `*.jsonl.bak-<дата>`.
+**Resuming.** If processing was interrupted (F3, Ctrl+Q, Ctrl+C, the PC shut down, the balance
+ran out), add the same file with the same type again — processing continues where it stopped,
+and fragments that are already paid for are not sent again. If the file itself or the chunking,
+format or language settings changed, the old dataset is not deleted but renamed to
+`*.jsonl.bak-<date>`.
 
-## Командная строка
+## Command line
 
 ```
-uv run dataset-generator [ФАЙЛЫ ...] [ОПЦИИ]
+uv run dataset-generator [FILES ...] [OPTIONS]
 ```
 
-`ФАЙЛЫ` — имена файлов (ищутся в текущей папке, затем в `input/`) или папки (берутся все
-поддерживаемые файлы внутри). Без файлов открывается пустой TUI, где файл вводится вручную.
-Без `-k` тип датасета спрашивается: в TUI — окном выбора, в режиме `--no-tui` — меню в
-терминале (если ввода нет, например в скрипте, берётся `mixed`). Пути с пробелами и скобками
-берите в одинарные кавычки: `'…/Book (1995).pdf'`.
+`FILES` are file names (looked up in the current folder, then in `input/`) or folders (all
+supported files inside are used). Without files, an empty TUI opens where you type a file name.
+Without `-k`, the dataset type is asked for: in the TUI with the picker, in `--no-tui` mode with a
+terminal menu (with no input available, for example in a script, `mixed` is used). Put paths with
+spaces and parentheses in single quotes: `'…/Book (1995).pdf'`.
 
-Примеры:
+Examples:
 
 ```bash
-uv run dataset-generator                                # TUI, всё вручную, DeepSeek
-uv run dataset-generator article.pdf                    # TUI, спросит тип датасета
-uv run dataset-generator -k mixed input/                # вся папка, модель выбирает типы сама
-uv run dataset-generator -k research input/articles/    # разбор исследований из статей
-uv run dataset-generator -k qa -f alpaca book.fb2.zip   # конкретный тип и формат
-uv run dataset-generator --no-tui -k mixed input/       # без TUI: итоги по фрагментам в терминал
-uv run dataset-generator --no-think -k mixed book.pdf   # без мышления — ещё дешевле и быстрее
-uv run dataset-generator -m deepseek-v4-pro book.pdf    # самая сильная модель DeepSeek
-uv run dataset-generator --help                         # справка по всем опциям
+uv run dataset-generator                                # TUI, everything by hand
+uv run dataset-generator article.pdf                    # TUI, asks for the dataset type
+uv run dataset-generator -k mixed input/                # whole folder, the model picks the types
+uv run dataset-generator -k research input/articles/    # research analysis from articles
+uv run dataset-generator -k qa -f alpaca book.fb2.zip   # a specific type and format
+uv run dataset-generator --no-tui -k mixed input/       # no TUI: per-fragment results in the terminal
+uv run dataset-generator --no-think -k mixed book.pdf   # no thinking: even cheaper and faster
+uv run dataset-generator -m deepseek-v4-pro book.pdf    # DeepSeek's strongest model
+uv run dataset-generator --help                         # help on all options
 ```
 
-| Опция | По умолчанию | Назначение |
+| Option | Default | Purpose |
 |---|---|---|
-| `-m, --model` | `deepseek-flash` | модель DeepSeek: `deepseek-flash` или `deepseek-v4-pro` |
-| `-k, --kind` | спросить | `mixed`, `auto`, `qa`, `research`, `cases`, `instructions`, `reasoning`, `dialogue` |
-| `-f, --format` | `chatml` | формат записей: `chatml`, `alpaca`, `sharegpt` |
-| `--language` | `auto` | язык датасета: `auto` — как у источника, или код (`ru`, `en`, `uk`…) |
-| `--no-system` | — | не добавлять system-промпт в примеры |
-| `--think` / `--no-think` | вкл | режим мышления модели (`--no-think` — дешевле и быстрее) |
-| `--effort` | `low` | глубина мышления: `low`, `high`, `max` (дороже и дольше) |
-| `-j, --parallel` | `16` | сколько фрагментов отправлять в API одновременно |
-| `--api-url` | `https://api.deepseek.com` | адрес API (подходит любой OpenAI-совместимый API) |
-| `-i, --input-dir` | `input` | где искать файлы по имени |
-| `-o, --output-dir` | `datasets` | куда писать датасеты |
-| `--chunk-size` | `3000` | размер фрагмента текста, символов |
-| `--overlap` | `300` | перекрытие соседних фрагментов, символов |
-| `-n, --max-items` | зависит от типа | максимум примеров на фрагмент (qa — 5, research и instructions — 4, mixed, cases и reasoning — 3, dialogue — 2) |
-| `--num-predict` | `8192` | лимит генерации на фрагмент (с мышлением — вдвое больше) |
-| `--retries` | `2` | повторы при ошибке (последняя попытка — без мышления) |
-| `--no-tui` | — | простой вывод в терминал вместо TUI (удобно для фоновых запусков) |
+| `-m, --model` | `deepseek-flash` | DeepSeek model: `deepseek-flash` or `deepseek-v4-pro` |
+| `-k, --kind` | ask | `mixed`, `auto`, `qa`, `research`, `cases`, `instructions`, `reasoning`, `dialogue` |
+| `-f, --format` | `chatml` | record format: `chatml`, `alpaca`, `sharegpt` |
+| `--language` | `auto` | dataset language: `auto` (same as the source) or a code (`ru`, `en`, `uk`…) |
+| `--no-system` | — | do not add a system prompt to the examples |
+| `--think` / `--no-think` | on | model thinking mode (`--no-think` is cheaper and faster) |
+| `--effort` | `low` | thinking depth: `low`, `high`, `max` (more expensive and slower) |
+| `-j, --parallel` | `16` | how many fragments to send to the API at once |
+| `--api-url` | `https://api.deepseek.com` | API address (any OpenAI-compatible API works) |
+| `-i, --input-dir` | `input` | where to look for files by name |
+| `-o, --output-dir` | `datasets` | where to write datasets |
+| `--chunk-size` | `3000` | text fragment size, characters |
+| `--overlap` | `300` | overlap between neighbouring fragments, characters |
+| `-n, --max-items` | depends on the type | max examples per fragment (qa — 5, research and instructions — 4, mixed, cases and reasoning — 3, dialogue — 2) |
+| `--num-predict` | `8192` | generation limit per fragment (doubled with thinking) |
+| `--retries` | `2` | retries on errors (the last attempt runs without thinking) |
+| `--no-tui` | — | plain terminal output instead of the TUI (handy for background runs) |
 
-API-ключ берётся из переменной окружения `DEEPSEEK_API_KEY`.
+The API key is read from the `DEEPSEEK_API_KEY` environment variable.
 
-## Поддерживаемые файлы
+## Supported files
 
-PDF, EPUB, MOBI, FB2 (в том числе `.fb2.zip`), DjVu, DOCX, TXT/MD (кодировка определяется
-автоматически, включая cp1251), HTML (например, сохранённые веб-страницы статей), XPS, CBZ.
-Сканы без текстового слоя нужно сначала распознать, например `ocrmypdf scan.pdf out.pdf`.
+PDF, EPUB, MOBI, FB2 (including `.fb2.zip`), DjVu, DOCX, TXT/MD (the encoding is detected
+automatically, including cp1251), HTML (for example, saved web pages of articles), XPS, CBZ.
+Scans without a text layer must be OCR'd first, for example with `ocrmypdf scan.pdf out.pdf`.
 
-При извлечении текста убираются номера страниц, переносы слов, повторяющиеся колонтитулы
-PDF и списки литературы (в журнале TUI пишется, сколько записей вырезано).
+Text extraction removes page numbers, hyphenation, repeated PDF running heads and reference
+lists (the TUI log shows how many entries were removed).
 
-## Советы
+## Tips
 
-- запускайте вне пиковых часов — всё вдвое дешевле;
-- `--no-think` — ещё дешевле и быстрее, качество чуть ниже на сложных фрагментах;
-- если API отвечает ошибками 429 (слишком много запросов), уменьшите `-j`;
-- для дообучения модели нужно несколько тысяч примеров — обработайте несколько источников
-  и объедините датасеты.
+- run outside peak hours — everything is half price;
+- `--no-think` is even cheaper and faster, with slightly lower quality on difficult fragments;
+- if the API answers with 429 errors (too many requests), lower `-j`;
+- fine-tuning a model needs several thousand examples — process several sources and combine the
+  datasets.
 
-## Устройство проекта
+## Project layout
 
 ```
 src/dataset_generator/
-├── cli.py          аргументы командной строки
-├── tui.py          интерфейс на Textual;  kind_picker.py — окно выбора типа
-├── console.py      режим без TUI
-├── pipeline.py     конвейер: файл → язык и тип → фрагменты (параллельно) → модель → датасет
-├── backends.py     DeepSeek API: потоковые запросы, проверка JSON, ошибки
-├── llm.py          генерация примеров и анализ источника поверх бэкенда
-├── kinds.py        типы датасетов: схемы ответа, задачи для промпта, примеры
-├── prompts.py      промпты эксперта-криминалиста (на английском)
-├── pricing.py      тарифы DeepSeek, пиковые часы, подсчёт стоимости
-├── estimate.py     прогноз времени и стоимости, оставшееся время
-├── extract.py      извлечение текста;  language.py — определение языка
-├── chunking.py     нарезка на фрагменты, удаление списков литературы
-└── dataset.py      форматы записей, запись JSONL, возобновление
+├── cli.py          command-line arguments
+├── tui.py          Textual interface;  kind_picker.py — dataset type picker
+├── console.py      mode without the TUI
+├── pipeline.py     pipeline: file → language and type → fragments (in parallel) → model → dataset
+├── backends.py     DeepSeek API: streaming requests, JSON checks, errors
+├── llm.py          example generation and source analysis on top of the backend
+├── kinds.py        dataset types: response schemas, prompt tasks, examples
+├── prompts.py      forensic expert prompts
+├── pricing.py      DeepSeek pricing, peak hours, cost calculation
+├── estimate.py     time and cost estimates, remaining time
+├── extract.py      text extraction;  language.py — language detection
+├── chunking.py     splitting into fragments, removing reference lists
+└── dataset.py      record formats, writing JSONL, resuming
 ```
 
-Проверка кода: `uv run ruff check .` и `uv run ruff format .`
+Code checks: `uv run ruff check .` and `uv run ruff format .`

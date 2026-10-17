@@ -1,7 +1,7 @@
-"""Работа с DeepSeek API (подходит и любой другой OpenAI-совместимый API).
+"""The DeepSeek API client (any other OpenAI-compatible API works too).
 
-Бэкенд отдаёт поток событий: размышления, ответ и в конце ответ, разобранный по
-JSON-схеме. Остальная программа не зависит от того, какой API за ним стоит.
+The backend yields a stream of events: thinking, the answer, and finally the answer
+parsed with the JSON schema. The rest of the program does not depend on the API used.
 """
 
 import json
@@ -25,15 +25,15 @@ from dataset_generator.pricing import Usage, price_for
 
 
 class GenerationError(Exception):
-    """Ошибка конкретной попытки генерации — запрос можно повторить."""
+    """A failed generation attempt; the request can be retried."""
 
     def __init__(self, message: str, usage: Usage | None = None) -> None:
         super().__init__(message)
-        self.usage = usage  # токены неудачной попытки тоже оплачены
+        self.usage = usage  # tokens of a failed attempt are billed too
 
 
 class FatalBackendError(Exception):
-    """Продолжать бессмысленно: неверный ключ, кончились деньги."""
+    """No point in continuing: invalid key, no balance left."""
 
 
 class ModelUnavailableError(Exception):
@@ -52,7 +52,7 @@ class Backend:
     label = ""
 
     async def check(self) -> list[str]:
-        """Проверяет доступность модели. Возвращает предупреждения."""
+        """Checks that the model is available. Returns warnings."""
         raise NotImplementedError
 
     def stream(
@@ -66,7 +66,7 @@ def create_backend(settings: Settings) -> Backend:
 
 
 class DeepSeekBackend(Backend):
-    """DeepSeek и любой другой OpenAI-совместимый API (адрес задаётся через --api-url)."""
+    """DeepSeek or any other OpenAI-compatible API (address set with --api-url)."""
 
     label = "DeepSeek API"
 
@@ -75,7 +75,7 @@ class DeepSeekBackend(Backend):
         self.client = AsyncOpenAI(
             api_key=settings.api_key or "missing",
             base_url=settings.api_url or DEEPSEEK_BASE_URL,
-            max_retries=3,  # 429 и 5xx SDK повторяет сам, с паузой
+            max_retries=3,  # the SDK retries 429 and 5xx itself, with backoff
             timeout=600,
         )
 
@@ -117,7 +117,7 @@ class DeepSeekBackend(Backend):
             "messages": _with_schema(messages, schema),
             "stream": True,
             "stream_options": {"include_usage": True},
-            # У DeepSeek нет строгой JSON-схемы: JSON-режим + схема в промпте + проверка.
+            # DeepSeek has no strict JSON schema: JSON mode + schema in the prompt + checks.
             "response_format": {"type": "json_object"},
             "max_tokens": settings.num_predict * (2 if think else 1),
         }
@@ -125,7 +125,7 @@ class DeepSeekBackend(Backend):
             request["reasoning_effort"] = settings.effort
             extra = {"thinking": {"type": "enabled"}}
         else:
-            # У DeepSeek мышление включено по умолчанию — выключаем явно.
+            # DeepSeek thinks by default, so thinking is turned off explicitly.
             request["temperature"] = 0.7
             extra = {"thinking": {"type": "disabled"}}
 
@@ -141,7 +141,7 @@ class DeepSeekBackend(Backend):
                     usage = _usage(chunk.usage)
                 for choice in chunk.choices:
                     delta = choice.delta
-                    # DeepSeek: reasoning_content; некоторые другие API: reasoning
+                    # DeepSeek: reasoning_content; some other APIs: reasoning
                     reasoning = getattr(delta, "reasoning_content", None) or getattr(
                         delta, "reasoning", None
                     )
@@ -181,8 +181,8 @@ class DeepSeekBackend(Backend):
 
 
 def _with_schema(messages: list[dict[str, str]], schema: type[BaseModel]) -> list[dict[str, str]]:
-    """Добавляет JSON-схему в системный промпт. Схема одна на весь запуск, поэтому
-    префикс промпта не меняется и DeepSeek берёт его из кеша почти бесплатно."""
+    """Adds the JSON schema to the system prompt. The schema is the same for the whole run,
+    so the prompt prefix does not change and DeepSeek serves it from cache almost for free."""
     schema_text = json.dumps(schema.model_json_schema(), ensure_ascii=False, separators=(",", ":"))
     system = (
         f"{messages[0]['content']}\n\nThe response must be a single JSON object that follows "

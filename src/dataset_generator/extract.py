@@ -1,4 +1,4 @@
-"""Извлечение текста из документов: статей, книг, отчётов, веб-страниц и т.д."""
+"""Text extraction from documents: articles, books, reports, web pages, etc."""
 
 import re
 import shutil
@@ -11,7 +11,7 @@ import pymupdf
 from charset_normalizer import from_bytes
 from docx import Document
 
-# Форматы, которые открывает MuPDF.
+# Formats opened by MuPDF.
 MUPDF_SUFFIXES = {
     ".pdf",
     ".epub",
@@ -28,7 +28,7 @@ TEXT_SUFFIXES = {".txt", ".md", ".markdown", ".rst", ".text"}
 SUPPORTED_SUFFIXES = MUPDF_SUFFIXES | TEXT_SUFFIXES | {".docx", ".djvu", ".djv", ".zip"}
 
 _BLOCK_TEXT_FLAGS = pymupdf.TEXTFLAGS_BLOCKS | pymupdf.TEXT_DEHYPHENATE
-# Колонтитул: до 150 символов в первых/последних двух блоках страницы, минимум на 3 страницах.
+# Running head: up to 150 chars in the first/last two blocks of a page, on 3+ pages.
 _EDGE_BLOCKS = 2
 _RUNNING_HEAD_CHARS = 150
 _RUNNING_HEAD_PAGES = 3
@@ -47,7 +47,7 @@ def is_supported(path: Path) -> bool:
 
 
 def extract_text(path: Path) -> str:
-    """Возвращает текст документа: один абзац (или строка исходника) на строку."""
+    """Returns the document text: one paragraph (or source line) per line."""
     suffix = path.suffix.lower()
     if suffix in MUPDF_SUFFIXES:
         text = _extract_mupdf(path=path)
@@ -92,24 +92,24 @@ def _extract_mupdf(
         pages = [
             [
                 text
-                # block = (x0, y0, x1, y1, text, block_no, block_type); type 1 — картинка
+                # block = (x0, y0, x1, y1, text, block_no, block_type); type 1 is an image
                 for block in page.get_text("blocks", flags=_BLOCK_TEXT_FLAGS)
                 if block[6] == 0 and (text := " ".join(block[4].split()))
             ]
             for page in doc
         ]
-        # Колонтитулы есть только у документов с фиксированной вёрсткой: у EPUB/FB2/HTML
-        # страницы нарезает сам MuPDF, и край страницы — случайный абзац.
+        # Only fixed-layout documents have running heads: for EPUB/FB2/HTML, MuPDF
+        # paginates the text itself, and the page edge is a random paragraph.
         if not doc.is_reflowable:
             pages = _strip_running_heads(pages)
         return "\n".join(text for blocks in pages for text in blocks)
 
 
 def _strip_running_heads(pages: list[list[str]]) -> list[list[str]]:
-    """Убирает колонтитулы: короткие блоки у края страницы, повторяющиеся на разных страницах.
+    """Removes running heads: short blocks at the page edge repeated across pages.
 
-    В статьях это название журнала, DOI, фамилии авторов, номера страниц; в книгах —
-    название книги или главы. Цифры не учитываем, чтобы «С. 12» и «С. 13» совпадали.
+    In articles these are the journal name, DOI, author names and page numbers; in books,
+    the book or chapter title. Digits are ignored so that "p. 12" and "p. 13" match.
     """
 
     def key(text: str) -> str:
@@ -136,7 +136,7 @@ def _strip_running_heads(pages: list[list[str]]) -> list[list[str]]:
 
 
 def _decode(data: bytes) -> str:
-    # Русские txt-файлы часто в cp1251/koi8-r — определяем кодировку автоматически.
+    # Russian txt files are often in cp1251/koi8-r, so the encoding is detected.
     try:
         return data.decode("utf-8-sig")
     except UnicodeDecodeError:
@@ -164,7 +164,7 @@ def _extract_djvu(path: Path) -> str:
 
 
 def _extract_zip(path: Path) -> str:
-    # Типичный случай — книги вида book.fb2.zip.
+    # The typical case is books like book.fb2.zip.
     with zipfile.ZipFile(path) as archive:
         for name in sorted(archive.namelist()):
             suffix = Path(name).suffix.lower()

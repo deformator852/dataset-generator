@@ -1,4 +1,4 @@
-"""Типы датасетов: что просим у модели и как это превращается в обучающие примеры."""
+"""Dataset types: what the model is asked for and how it becomes training examples."""
 
 from collections.abc import Callable
 from dataclasses import dataclass, field, replace
@@ -7,19 +7,19 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, Field, create_model
 
-AUTO = "auto"  # модель выбирает один тип для всего документа
-MIXED = "mixed"  # модель выбирает типы для каждого фрагмента → несколько датасетов
+AUTO = "auto"  # the model picks one type for the whole document
+MIXED = "mixed"  # the model picks types for each fragment → several datasets
 
 
 @dataclass(slots=True, frozen=True)
 class Example:
-    """Обучающий пример в общем виде, независимо от типа и формата датасета."""
+    """A training example in a generic form, independent of dataset type and format."""
 
-    turns: tuple[tuple[str, str], ...]  # (реплика пользователя, ответ ассистента)
+    turns: tuple[tuple[str, str], ...]  # (user turn, assistant answer)
     category: str
     subtype: str
-    reasoning: str = ""  # рассуждение перед последним ответом (тип reasoning)
-    kind: str = ""  # ключ типа датасета, в который пойдёт пример
+    reasoning: str = ""  # reasoning before the last answer (the reasoning type)
+    kind: str = ""  # key of the dataset type the example goes to
 
 
 class QAItem(BaseModel):
@@ -68,22 +68,22 @@ class DialogueItem(BaseModel):
 
 @dataclass(slots=True, frozen=True)
 class DatasetKind:
-    """Тип датасета. Тексты на английском — и для интерфейса, и для промпта модели."""
+    """A dataset type. The texts are used both in the interface and in the model prompt."""
 
     key: str
     title: str
     icon: str
     summary: str
-    suits: str  # для каких источников подходит — видят и пользователь, и авто-анализ
-    fragment_hint: str  # какой фрагмент подходит — для режима «по фрагментам»
-    unit: str  # «at most N <unit>» в запросе к модели
-    fields: str  # описание полей JSON для промпта
-    task: str  # раздел промпта с постановкой задачи
+    suits: str  # which sources it suits; shown to the user and used by auto analysis
+    fragment_hint: str  # which fragments it suits; used by "Auto — per fragment"
+    unit: str  # "at most N <unit>" in the request to the model
+    fields: str  # description of the JSON fields for the prompt
+    task: str  # the prompt section with the task
     default_items: int
-    item_chars: int  # средний объём одного примера — для оценки времени
+    item_chars: int  # average size of one example, for estimates
     item_model: type[BaseModel]
     convert: Callable[[Any], Example]
-    sample: Example  # пример для окна выбора
+    sample: Example  # example for the type picker
     result_model: type[BaseModel] = field(init=False)
 
     def __post_init__(self) -> None:
@@ -381,12 +381,12 @@ MIXED_SUMMARY = (
 )
 MIXED_DEFAULT_ITEMS = 3
 MIXED_MAX_KINDS = 2
-# Поле selected идёт первым: модель сначала выбирает типы, потом пишет примеры. Схема
-# ограничивает выбор двумя типами, а примеры невыбранных типов программа отбрасывает.
+# The selected field comes first: the model picks the types, then writes examples. The schema
+# limits the choice to two types, and examples of unselected types are discarded.
 MIXED_RESULT = create_model(
     "MixedResult",
-    # maxItems — только подсказка модели; лишнее обрезаем сами, а не
-    # роняем ответ валидацией.
+    # maxItems is only a hint for the model; extra items are cut off here instead of
+    # failing validation.
     selected=(
         list[Literal[tuple(KINDS)]],  # type: ignore[valid-type]
         Field(json_schema_extra={"maxItems": MIXED_MAX_KINDS}),
@@ -396,7 +396,7 @@ MIXED_RESULT = create_model(
 
 
 def mixed_examples(result: BaseModel, limit: int) -> list[Example]:
-    """Примеры выбранных моделью типов, по очереди из каждого типа, не больше limit."""
+    """Examples of the types the model selected, alternating between types, at most limit."""
     selected = set(result.selected[:MIXED_MAX_KINDS])  # type: ignore[attr-defined]
     per_kind = [
         [kind.make_example(item) for item in getattr(result, key)]
@@ -408,7 +408,7 @@ def mixed_examples(result: BaseModel, limit: int) -> list[Example]:
 
 
 def run_title(run: str) -> str:
-    """Название режима: конкретного типа или одного из авто-режимов."""
+    """Title of a mode: a specific type or one of the auto modes."""
     if run == AUTO:
         return AUTO_TITLE
     if run == MIXED:
@@ -423,10 +423,10 @@ def max_items_for(run: str, override: int | None) -> int:
 
 
 def expected_output_chars(run: str, max_items: int) -> int:
-    """Сколько текста примерно сгенерирует модель на один фрагмент."""
+    """Roughly how much text the model generates per fragment."""
     if run in KINDS:
         item_chars = KINDS[run].item_chars
     else:
         item_chars = sum(kind.item_chars for kind in KINDS.values()) // len(KINDS)
-    # Модель не всегда выдаёт максимум примеров — в среднем около 80%.
+    # The model does not always produce the maximum number of examples; about 80% on average.
     return int(item_chars * max_items * 0.8)

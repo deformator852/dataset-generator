@@ -1,4 +1,4 @@
-"""Нарезка текста на фрагменты по границам абзацев и предложений."""
+"""Splitting text into fragments at paragraph and sentence boundaries."""
 
 import re
 
@@ -6,10 +6,10 @@ _SENTENCE_END = re.compile(r"(?<=[.!?…])\s+")
 
 
 def split_into_chunks(text: str, size: int, overlap: int) -> list[str]:
-    """Собирает абзацы во фрагменты длиной до `size` символов.
+    """Groups paragraphs into fragments of up to `size` characters.
 
-    Соседние фрагменты перекрываются хвостом предыдущего (до `overlap` символов),
-    чтобы мысль, разорванная границей, не терялась.
+    Neighbouring fragments overlap by the tail of the previous one (up to `overlap`
+    characters), so a thought split by the boundary is not lost.
     """
     units: list[str] = []
     for line in text.split("\n"):
@@ -63,7 +63,7 @@ def _tail(units: list[str], overlap: int) -> list[str]:
     for unit in reversed(units):
         if total + len(unit) > overlap:
             if not tail:
-                # Абзац длиннее перекрытия — берём его последние предложения.
+                # The paragraph is longer than the overlap: take its last sentences.
                 partial = _last_sentences(unit, overlap)
                 tail = [partial] if partial else []
             break
@@ -83,7 +83,7 @@ def _last_sentences(paragraph: str, limit: int) -> str:
     return " ".join(picked)
 
 
-# Признаки библиографической записи: год плюс выходные данные или инициалы автора.
+# Signs of a bibliographic entry: a year plus publication details or author initials.
 _YEAR = re.compile(r"\b(1[89]\d\d|20\d\d)\b")
 _BIBLIO_MARKERS = re.compile(
     r"//|\bС\.\s*\d|\d+\s*с\.|\bpp?\.\s*\d|\bvol\.|\bт\.\s*\d|№\s*\d|doi|https?://|isbn|"
@@ -100,16 +100,16 @@ _REFERENCES_HEADING = re.compile(
 _NUMBERED = re.compile(r"^\s*\[?\d{1,3}[.)\]]\s.{0,200}$")
 _REFERENCE_LINE_CHARS = 350
 _MIN_REFERENCE_RUN = 4
-_GAP_LINE_CHARS = 200  # перенос длинной записи на вторую строку не разрывает список
+_GAP_LINE_CHARS = 200  # a long entry wrapped onto a second line does not break the list
 
 
 def strip_references(text: str) -> tuple[str, int]:
-    """Вырезает списки литературы (в статьях это до трети текста) — модели они не нужны.
+    """Removes reference lists (up to a third of an article); the model does not need them.
 
-    Список — это не меньше четырёх библиографических записей подряд: коротких строк с
-    годом и выходными данными или инициалами. Заголовок «Список литературы» перед ним
-    тоже удаляется. Обычные абзацы со ссылками на законы длиннее и не затрагиваются.
-    Возвращает текст и число удалённых записей.
+    A list is at least four bibliographic entries in a row: short lines with a year and
+    publication details or initials. A heading such as "References" before it is removed
+    too. Ordinary paragraphs citing laws are longer and are not affected.
+    Returns the text and the number of removed entries.
     """
     lines = text.split("\n")
     is_reference = [_is_reference(line) for line in lines]
@@ -131,7 +131,7 @@ def strip_references(text: str) -> tuple[str, int]:
             j += 1
         if count >= _MIN_REFERENCE_RUN:
             start = i
-            # Начало первой записи, перенесённое на отдельную строку («1. Белкин Р. С. …»).
+            # The start of the first entry wrapped onto its own line ("1. Smith, J. …").
             if start > 0 and _NUMBERED.match(lines[start - 1]):
                 start -= 1
             if start > 0 and _REFERENCES_HEADING.match(lines[start - 1]):

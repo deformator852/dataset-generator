@@ -3,7 +3,7 @@ __pycache__/
 *.py[cod]
 .ruff_cache/
 
-# Исходные книги и сгенерированные датасеты не коммитим
+# Source documents and generated datasets are not committed
 input/*
 !input/.gitkeep
 datasets/*

@@ -1,13 +1,13 @@
-"""Определение языка источника — на нём же пишется датасет."""
+"""Detecting the source language, which is also the dataset language."""
 
 from collections import Counter
 from dataclasses import dataclass
 
 from langdetect import DetectorFactory, LangDetectException, detect
 
-DetectorFactory.seed = 0  # детерминированный результат между запусками
+DetectorFactory.seed = 0  # deterministic results across runs
 
-# код → (название по-английски, самоназвание)
+# code → (English name, native name)
 _NAMES = {
     "ru": ("Russian", "русский"),
     "uk": ("Ukrainian", "українська"),
@@ -44,7 +44,7 @@ class Language:
 
     @property
     def label(self) -> str:
-        """«Russian (русский)» — и для интерфейса, и для промпта модели."""
+        """A label like "Russian (русский)", used in the interface and the model prompt."""
         return self.english if self.english == self.native else f"{self.english} ({self.native})"
 
 
@@ -55,7 +55,7 @@ def language_from_code(code: str) -> Language:
 
 
 def detect_language(text: str) -> Language:
-    """Голосование по нескольким фрагментам из разных частей текста."""
+    """Majority vote over several samples from different parts of the text."""
     step = max(len(text) // _SAMPLES, 1)
     votes: Counter[str] = Counter()
     for start in range(0, len(text), step):

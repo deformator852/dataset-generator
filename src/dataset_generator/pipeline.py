@@ -1,4 +1,4 @@
-"""Конвейер обработки файла: текст → язык и тип датасета → фрагменты → модель → датасет."""
+"""File processing pipeline: text → language and dataset type → fragments → model → dataset."""
 
 import asyncio
 import json
@@ -47,15 +47,15 @@ _ANALYSIS_SAMPLE_CHARS = 1500
 @dataclass(slots=True, frozen=True)
 class Job:
     path: Path
-    kind: str  # ключ из KINDS, AUTO (тип на весь документ) или MIXED (типы по фрагментам)
+    kind: str  # a KINDS key, AUTO (one type per document) or MIXED (types per fragment)
     dataset_format: str
 
 
 def resolve_input(raw: str, settings: Settings) -> list[Path]:
-    """Превращает введённое имя/путь в список файлов.
+    """Turns an entered name or path into a list of files.
 
-    Ищет сначала относительно текущей папки, затем в папке входных файлов.
-    Для папки возвращает все поддерживаемые файлы внутри неё.
+    Looks relative to the current folder first, then in the input folder.
+    For a folder, returns all supported files inside it.
     """
     name = raw.strip().strip("'\"")
     if not name:
@@ -161,10 +161,10 @@ async def _process_chunks(
     settings: Settings,
     backend: Backend,
 ) -> AsyncIterator[Event]:
-    """Обрабатывает фрагменты, до `parallel` одновременно; события идут через очередь.
+    """Processes fragments, up to `parallel` at once; events go through a queue.
 
-    Каждый готовый фрагмент сразу записывается в датасет и отмечается в состоянии,
-    поэтому прерванную обработку можно продолжить с того же места.
+    Each finished fragment is written to the dataset and marked in the state right away,
+    so interrupted processing can be resumed from the same place.
     """
     total = len(chunks)
     queue: asyncio.Queue[Event | None] = asyncio.Queue()
@@ -232,7 +232,7 @@ async def _process_chunks(
                 await process(index)
             except FatalBackendError as exc:
                 await queue.put(FileFailed(path, str(exc)))
-            except Exception as exc:  # ошибка одного фрагмента не должна ронять остальные
+            except Exception as exc:  # one fragment's error must not stop the others
                 failed += 1
                 await queue.put(ChunkFailed(index, f"unexpected error: {exc!r}", 0.0))
 
@@ -264,7 +264,7 @@ async def _estimate(
     remaining: list[int],
     settings: Settings,
 ) -> AsyncIterator[Event]:
-    """Прогноз времени и стоимости для оставшихся фрагментов (потом уточняется по факту)."""
+    """Time and cost estimate for the remaining fragments (refined later in practice)."""
     max_items = max_items_for(run, settings.max_items)
     first = remaining[0]
     messages, schema = generation_request(
@@ -295,20 +295,20 @@ def _cost(usage: Usage | None, settings: Settings) -> float:
 
 
 def _attempt_modes(settings: Settings) -> list[bool]:
-    """Режим мышления для каждой попытки.
+    """Thinking mode for each attempt.
 
-    Последнюю попытку делаем без мышления: чаще всего срыв — это слишком длинные
-    размышления, а без них модель отвечает сразу. Вызывается заново для каждого
-    фрагмента, чтобы переключение мышления в TUI применялось со следующего.
+    The last attempt runs without thinking: failures are most often caused by overly long
+    thinking, and without it the model answers right away. Called anew for each fragment,
+    so toggling thinking in the TUI applies from the next one.
     """
     attempts = settings.retries + 1
     return [settings.think and (n < attempts or attempts == 1) for n in range(1, attempts + 1)]
 
 
 def _samples(chunks: list[str]) -> list[str]:
-    """Фрагменты из начала, середины и конца — для определения жанра источника.
+    """Fragments from the beginning, middle and end, to identify the source genre.
 
-    У короткого документа (статьи на пару фрагментов) берётся весь текст.
+    For a short document (an article of a couple of fragments), the whole text is used.
     """
     if len(chunks) <= _ANALYSIS_SAMPLES:
         picked = chunks

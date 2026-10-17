@@ -1,4 +1,4 @@
-"""Запись датасета в JSONL с поддержкой возобновления прерванной обработки."""
+"""Writing datasets to JSONL with support for resuming interrupted processing."""
 
 import hashlib
 import json
@@ -22,7 +22,7 @@ def to_record(
 ) -> dict[str, Any]:
     turns = [(user.strip(), assistant.strip()) for user, assistant in example.turns]
     if example.reasoning:
-        # Рассуждение кладём в <think> перед последним ответом — так учат Qwen3/R1-модели.
+        # Reasoning goes into <think> before the last answer, as Qwen3/R1 models are trained.
         user, assistant = turns[-1]
         turns[-1] = (user, f"<think>\n{example.reasoning.strip()}\n</think>\n\n{assistant}")
 
@@ -57,7 +57,7 @@ def to_record(
 
 
 def sample_record(kind: DatasetKind, dataset_format: str, include_system: bool) -> dict[str, Any]:
-    """Пример записи датасета — для показа пользователю при выборе типа."""
+    """An example dataset record, shown to the user in the type picker."""
     example = kind.sample
     system = TRAINING_SYSTEM_PROMPTS["en"].split(":")[0] + "…" if include_system else None
     metadata = {
@@ -94,7 +94,7 @@ def base_fingerprint(
 
 
 def find_auto_kind(source: Path, settings: Settings, fingerprint: dict[str, Any]) -> str | None:
-    """Тип, который авто-анализ уже выбрал для этого файла в прошлый запуск."""
+    """The type auto analysis already picked for this file in a previous run."""
     candidates = []
     for key in KINDS:
         state_path = settings.output_dir / f"{source.name}.{key}.state.json"
@@ -105,12 +105,12 @@ def find_auto_kind(source: Path, settings: Settings, fingerprint: dict[str, Any]
 
 
 class DatasetWriter:
-    """Датасеты одного запуска для одного файла + файл состояния.
+    """The datasets of one run for one file, plus a state file.
 
-    Конкретный тип → `<имя файла>.<тип>.jsonl`. Режим «по фрагментам» (mixed) →
-    `<имя файла>.mixed.<тип>.jsonl`, по файлу на каждый тип, который выбрала модель.
-    Состояние хранит номера обработанных фрагментов и хеши вопросов, поэтому
-    повторный запуск продолжает с места остановки и не плодит дубликаты.
+    A specific type → `<file name>.<type>.jsonl`. Auto — per fragment (mixed) →
+    `<file name>.mixed.<type>.jsonl`, one file per type the model picked.
+    The state keeps the indices of processed fragments and question hashes, so a
+    rerun continues where it stopped and does not create duplicates.
     """
 
     def __init__(
@@ -157,7 +157,7 @@ class DatasetWriter:
             self.seen = set(state["seen"])
             self.records.update(state["records"])
             return
-        # Файл или настройки изменились — старые датасеты не затираем.
+        # The file or the settings changed: keep the old datasets instead of overwriting.
         stamp = datetime.now().strftime("%Y%m%d-%H%M%S")
         for path in self.paths.values():
             if path.exists():
@@ -165,7 +165,7 @@ class DatasetWriter:
         self._save_state()
 
     def add(self, chunk_index: int, examples: list[Example]) -> int:
-        """Дописывает примеры фрагмента в датасеты и отмечает фрагмент обработанным."""
+        """Appends a fragment's examples to the datasets and marks the fragment as done."""
         lines: dict[str, list[str]] = {}
         for example in examples:
             if example.kind not in self.paths or not _is_valid(example):

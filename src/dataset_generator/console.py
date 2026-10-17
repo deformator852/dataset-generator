@@ -1,4 +1,4 @@
-"""Простой потоковый вывод в терминал без TUI (для фоновых запусков и логов)."""
+"""Plain terminal output without the TUI (for background runs and logs)."""
 
 import sys
 from pathlib import Path
@@ -44,7 +44,7 @@ from dataset_generator.pricing import format_cost, price_for
 
 
 def ask_kind(console: Console) -> str:
-    """Меню выбора типа датасета с примерами; без терминала — авто по фрагментам."""
+    """Dataset type menu with examples; without a terminal, Auto — per fragment."""
     if not sys.stdin.isatty():
         return MIXED
     console.rule("[bold]Which dataset should be built?")
@@ -77,8 +77,8 @@ async def run_console(settings: Settings, files: list[Path]) -> int:
     except ModelUnavailableError as exc:
         console.print(f"✗ {exc}", style="bold red", markup=False)
         return 1
-    # При параллельных запросах токены разных фрагментов перемешались бы — тогда
-    # печатаем только итог по каждому фрагменту.
+    # With parallel requests, tokens of different fragments would interleave, so
+    # only a summary line per fragment is printed.
     live = settings.parallel == 1
     priced = price_for(settings.model) is not None
     spent = 0.0

@@ -1,4 +1,4 @@
-"""События конвейера — их одинаково потребляют TUI и консольный режим."""
+"""Pipeline events, consumed the same way by the TUI and the console mode."""
 
 from dataclasses import dataclass
 from pathlib import Path
@@ -19,8 +19,8 @@ class TextExtracted:
     chars: int
     total_chunks: int
     language: str
-    detected: bool  # язык определён автоматически, а не задан вручную
-    references_removed: int  # сколько записей списков литературы вырезано
+    detected: bool  # the language was detected automatically, not set manually
+    references_removed: int  # how many reference list entries were removed
 
 
 @dataclass(slots=True, frozen=True)
@@ -33,18 +33,18 @@ class KindChosen:
     path: Path
     kind: str
     title: str
-    # user — выбран пользователем, auto — определён моделью, resumed — взят из прошлого
-    # авто-анализа этого файла, fallback — анализ не удался, взят тип по умолчанию
+    # user: chosen by the user; auto: picked by the model; resumed: taken from a previous
+    # auto analysis of this file; fallback: the analysis failed, the default type is used
     how: Literal["user", "auto", "resumed", "fallback"]
     genre: str = ""
     reason: str = ""
-    cost: float = 0.0  # стоимость анализа, $
+    cost: float = 0.0  # cost of the analysis, $
 
 
 @dataclass(slots=True, frozen=True)
 class FileLoaded:
     path: Path
-    output: str  # путь к датасету или шаблон путей для режима «по фрагментам»
+    output: str  # dataset path, or a path pattern for "Auto — per fragment"
     total_chunks: int
     already_done: int
 
@@ -54,7 +54,7 @@ class EstimateReady:
     path: Path
     estimate: Estimate
     parallel: int = 1
-    cost: float | None = None  # ожидаемая стоимость оставшихся фрагментов, $
+    cost: float | None = None  # expected cost of the remaining fragments, $
 
 
 @dataclass(slots=True, frozen=True)
@@ -67,7 +67,7 @@ class ChunkStarted:
 @dataclass(slots=True, frozen=True)
 class ThinkingDelta:
     text: str
-    index: int = -1  # номер фрагмента; -1 — анализ источника
+    index: int = -1  # fragment index; -1 is the source analysis
 
 
 @dataclass(slots=True, frozen=True)
@@ -81,7 +81,7 @@ class ChunkRetry:
     index: int
     attempt: int
     reason: str
-    cost: float = 0.0  # неудачная попытка тоже оплачена
+    cost: float = 0.0  # a failed attempt is billed too
 
 
 @dataclass(slots=True, frozen=True)
@@ -91,9 +91,9 @@ class ChunkFinished:
     examples: list[Example]
     written: int
     tokens: int
-    seconds: float  # последняя (удачная) попытка
-    elapsed: float  # все попытки вместе — для уточнения оставшегося времени
-    cost: float = 0.0  # $, последняя попытка
+    seconds: float  # the last (successful) attempt
+    elapsed: float  # all attempts together, used to refine the remaining time
+    cost: float = 0.0  # $, the last attempt
 
 
 @dataclass(slots=True, frozen=True)
@@ -108,9 +108,9 @@ class ChunkFailed:
 class FileFinished:
     path: Path
     output: str
-    records: dict[str, int]  # тип датасета → число примеров
+    records: dict[str, int]  # dataset type → number of examples
     failed_chunks: int
-    cost: float = 0.0  # $ за этот запуск
+    cost: float = 0.0  # $ for this run
 
 
 @dataclass(slots=True, frozen=True)

@@ -1,4 +1,4 @@
-"""Окно выбора типа и формата датасета с живым примером записи."""
+"""Dataset type and format picker with a live record example."""
 
 import json
 from pathlib import Path
@@ -31,7 +31,7 @@ from dataset_generator.kinds import (
 
 
 def describe_example(example: Example) -> Text:
-    """Человекочитаемый вид примера: реплики пользователя и ассистента."""
+    """Human-readable view of an example: user and assistant turns."""
     text = Text()
     for number, (user, assistant) in enumerate(example.turns):
         if number:
@@ -47,7 +47,7 @@ def describe_example(example: Example) -> Text:
 
 
 class KindPicker(ModalScreen[tuple[str, str] | None]):
-    """Возвращает (тип датасета, формат) или None, если пользователь передумал."""
+    """Returns (dataset type, format), or None if the user cancelled."""
 
     DEFAULT_CSS = """
     KindPicker { align: center middle; }
@@ -126,7 +126,7 @@ class KindPicker(ModalScreen[tuple[str, str] | None]):
         kinds = self.query_one("#kinds", OptionList)
         kinds.highlighted = kinds.get_option_index(self.kind)
         kinds.focus()
-        # Пример листается колесом мыши, а Tab сразу переходит к выбору формата.
+        # The example scrolls with the mouse wheel, and Tab goes straight to the format.
         self.query_one("#preview").can_focus = False
         self.query_one("#preview").border_title = "Example"
         self._update_preview()

@@ -1,4 +1,4 @@
-"""TUI на Textual: очередь файлов, живые размышления модели, ответы и журнал."""
+"""Textual TUI: file queue, live model thinking, answers and the log."""
 
 import time
 from collections import deque
@@ -42,9 +42,9 @@ from dataset_generator.pricing import format_cost, is_peak, price_for
 
 
 class StreamView(VerticalScroll):
-    """Прокручиваемая панель с переносом строк для потокового вывода модели.
+    """A scrollable, word-wrapping panel for streamed model output.
 
-    Токены копятся в буфере и перерисовываются по таймеру, а не на каждый токен.
+    Tokens are buffered and redrawn on a timer rather than on every token.
     """
 
     DEFAULT_CSS = """
@@ -84,7 +84,7 @@ class StreamView(VerticalScroll):
 
 
 class PathSuggester(Suggester):
-    """Автодополнение путей (принимается клавишей →); ищет и в папке входных файлов."""
+    """Path autocompletion (accepted with →); also searches the input folder."""
 
     def __init__(self, input_dir: Path) -> None:
         super().__init__(use_cache=False, case_sensitive=True)
@@ -158,8 +158,8 @@ class DatasetApp(App[None]):
         self.last_speed: float | None = None
         self.eta: Eta | None = None
         self.estimate_label = "—"
-        # Параллельная обработка: какие фрагменты сейчас в работе (номер → время старта)
-        # и чей поток размышлений/ответа показываем (-1 — анализ источника).
+        # Parallel processing: which fragments are in progress (index → start time)
+        # and whose thinking/answer stream is shown (-1 is the source analysis).
         self.inflight: dict[int, float] = {}
         self.watch: int | None = None
         self.spent = 0.0
@@ -219,7 +219,7 @@ class DatasetApp(App[None]):
     def log_line(self, message: str | Text, style: str = "") -> None:
         self.journal.write(Text(message, style=style) if isinstance(message, str) else message)
 
-    # --- ввод и очередь ---------------------------------------------------
+    # --- input and queue ------------------------------------------------------
 
     def on_input_submitted(self, event: Input.Submitted) -> None:
         value = event.value.strip()
@@ -242,7 +242,7 @@ class DatasetApp(App[None]):
             self.request_jobs(supported)
 
     def request_jobs(self, files: list[Path]) -> None:
-        """Ставит файлы в очередь; если тип датасета не задан флагом — спрашивает."""
+        """Queues files; asks for the dataset type unless it was set with a flag."""
         busy = {job.path.resolve() for job in self.queue}
         if self.current:
             busy.add(self.current.path.resolve())
@@ -299,7 +299,7 @@ class DatasetApp(App[None]):
             try:
                 async for event in process_file(self.current, self.settings, self.backend):
                     self.handle_event(event)
-            except Exception as exc:  # показываем ошибку, а не роняем TUI
+            except Exception as exc:  # show the error instead of crashing the TUI
                 name = self.current.path.name
                 self.log_line(f"✗ {name}: unexpected error: {exc!r}", "bold red")
             finally:
@@ -311,7 +311,7 @@ class DatasetApp(App[None]):
                 self.refresh_sidebar()
         self.notify("Queue finished", title="Done")
 
-    # --- события конвейера -------------------------------------------------
+    # --- pipeline events ------------------------------------------------------
 
     def handle_event(self, event: Event) -> None:
         thinking = self.query_one("#thinking", StreamView)
@@ -401,7 +401,7 @@ class DatasetApp(App[None]):
                 )
             case ChunkStarted():
                 self.inflight[event.index] = time.monotonic()
-                # Показываем поток одного фрагмента; следующий — когда этот закончится.
+                # Show the stream of one fragment; the next one once it finishes.
                 if self.watch is None or self.watch not in self.inflight:
                     self.watch = event.index
                 if event.index == self.watch:
@@ -487,7 +487,7 @@ class DatasetApp(App[None]):
             self.log_line(describe_example(example))
             self.log_line(f"   [{example.category} · {example.subtype}]", "dim")
 
-    # --- боковая панель ----------------------------------------------------
+    # --- sidebar --------------------------------------------------------------
 
     def refresh_sidebar(self) -> None:
         s = self.settings
@@ -540,7 +540,7 @@ class DatasetApp(App[None]):
                 else ""
             )
             money = f"Cost:          [b]{format_cost(self.spent)}[/]{estimate}\n"
-            self.refresh_hardware()  # там тоже стоимость и текущий тариф
+            self.refresh_hardware()  # it shows the cost and the current tariff too
         self.query_one("#stats", Static).update(
             f"Fragment:      {self.chunk_label}{elapsed}{in_progress}\n"
             f"{money}"
@@ -570,7 +570,7 @@ class DatasetApp(App[None]):
         lines.append(f"spent this session: [b]{format_cost(self.spent)}[/]")
         self.query_one("#hardware", Static).update("\n".join(lines))
 
-    # --- действия ------------------------------------------------------------
+    # --- actions --------------------------------------------------------------
 
     def action_toggle_think(self) -> None:
         self.settings.think = not self.settings.think

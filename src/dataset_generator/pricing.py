@@ -1,8 +1,8 @@
-"""Тарифы DeepSeek и подсчёт стоимости.
+"""DeepSeek pricing and cost calculation.
 
-Цены — с https://api-docs.deepseek.com/quick_start/pricing (октябрь 2026), за 1 млн
-токенов в пиковые часы. Вне пика всё вдвое дешевле. DeepSeek может менять цены —
-тогда достаточно поправить таблицу.
+Prices are from https://api-docs.deepseek.com/quick_start/pricing (October 2026), per
+1M tokens at peak hours. Off-peak everything is half price. If DeepSeek changes its
+prices, update the table.
 """
 
 from dataclasses import dataclass
@@ -20,9 +20,9 @@ PEAK_PRICES = {
     "deepseek-flash": Price(cache_hit=0.006, cache_miss=0.30, output=1.20),
     "deepseek-v4-pro": Price(cache_hit=0.044, cache_miss=1.32, output=3.96),
 }
-# Старые имена всё ещё принимаются и тарифицируются как Flash.
+# Legacy names are still accepted and billed as Flash.
 ALIASES = {"deepseek-v4-flash": "deepseek-flash", "deepseek-v4-flash-vision-exp": "deepseek-flash"}
-# Пиковые часы (UTC): пн–пт 01:00–04:00 и 06:00–10:00.
+# Peak hours (UTC): Mon–Fri 01:00–04:00 and 06:00–10:00.
 _PEAK_HOURS = {1, 2, 3, 6, 7, 8, 9}
 
 
@@ -30,7 +30,7 @@ _PEAK_HOURS = {1, 2, 3, 6, 7, 8, 9}
 class Usage:
     cache_hit: int = 0
     cache_miss: int = 0
-    output: int = 0  # включая размышления
+    output: int = 0  # including thinking
     reasoning: int = 0
 
     def __add__(self, other: "Usage") -> "Usage":

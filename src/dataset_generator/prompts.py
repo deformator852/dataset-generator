@@ -1,9 +1,9 @@
-"""Промпты для анализа источника и генерации датасета по криминалистике (на английском)."""
+"""Prompts for source analysis and forensic science dataset generation."""
 
 from dataset_generator.kinds import KINDS, DatasetKind
 from dataset_generator.language import Language
 
-# System-промпт будущей модели, который попадает в обучающие примеры, — на языке датасета.
+# System prompt of the future model that goes into training examples, in the dataset language.
 TRAINING_SYSTEM_PROMPTS = {
     "ru": (
         "Ты — ИИ-ассистент по криминалистике и судебной экспертизе. Ты помогаешь следователям, "
@@ -30,8 +30,8 @@ def training_system_prompt(language: Language) -> str:
     return TRAINING_SYSTEM_PROMPTS.get(language.code, TRAINING_SYSTEM_PROMPTS["en"])
 
 
-# Промпты для модели — на английском: Qwen3 точнее следует английским инструкциям, а
-# большинство источников англоязычные. Язык самих примеров задаётся отдельно ({language}).
+# Prompts for the model are in English: models follow English instructions more precisely,
+# and most sources are in English. The language of the examples is set separately ({language}).
 _GENERATION_SYSTEM_PROMPT = """\
 You are a leading forensic science expert and criminalistics instructor preparing a \
 high-quality training dataset for a language model — an AI assistant for forensic science, \
@@ -170,7 +170,7 @@ def build_generation_messages(
 def build_mixed_messages(
     language: Language, *, source: str, chunk: str, number: int, total: int, max_items: int
 ) -> list[dict[str, str]]:
-    """Режим «по фрагментам»: модель сама выбирает подходящие фрагменту типы."""
+    """Auto — per fragment: the model picks the types that fit the fragment."""
     kinds = "\n\n".join(
         f"[{kind.key}] {kind.title}. Use when the fragment contains: "
         f"{kind.fragment_hint}.\n{kind.task}"

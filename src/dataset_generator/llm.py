@@ -1,4 +1,4 @@
-"""Запросы к модели: анализ источника и генерация примеров (через любой бэкенд)."""
+"""Model requests: source analysis and example generation (through any backend)."""
 
 from collections.abc import AsyncIterator
 from dataclasses import dataclass
@@ -44,7 +44,7 @@ class Generation:
 def generation_request(
     run: str, language: Language, *, source: str, chunk: str, index: int, total: int, max_items: int
 ) -> tuple[list[dict[str, str]], type[BaseModel]]:
-    """Сообщения и схема ответа для фрагмента: конкретный тип или режим «по фрагментам»."""
+    """Messages and response schema for a fragment: a specific type or Auto — per fragment."""
     if run == MIXED:
         messages = build_mixed_messages(
             language, source=source, chunk=chunk, number=index + 1, total=total, max_items=max_items

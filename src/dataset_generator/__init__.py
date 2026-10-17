@@ -1,4 +1,4 @@
-"""Генератор датасетов по криминалистике на базе DeepSeek API."""
+"""Forensic science dataset generator powered by the DeepSeek API."""
 
 from dataset_generator.cli import main
 

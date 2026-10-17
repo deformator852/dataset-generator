@@ -1,7 +1,7 @@
 [project]
 name = "dataset-generator"
 version = "0.1.0"
-description = "Генератор обучающих датасетов по криминалистике из PDF/EPUB/FB2/TXT и др. с помощью DeepSeek API"
+description = "Forensic science training dataset generator for PDF/EPUB/FB2/TXT and more, powered by the DeepSeek API"
 readme = "README.md"
 authors = [
     { name = "Nikita", email = "kostneko30@gmail.com" }
@@ -35,5 +35,5 @@ target-version = "py312"
 
 [tool.ruff.lint]
 select = ["E", "F", "W", "I", "B", "UP", "SIM", "RUF"]
-# Кириллица в строках/комментариях — норма для этого проекта.
+# Cyrillic in data strings (Russian/Ukrainian prompts, bibliography patterns) is intended.
 ignore = ["RUF001", "RUF002", "RUF003"]
