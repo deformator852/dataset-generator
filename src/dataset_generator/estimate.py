@@ -21,6 +21,7 @@ from ollama import AsyncClient, ProcessResponse, ResponseError
 from pydantic import BaseModel
 
 from dataset_generator.config import Settings
+from dataset_generator.pricing import Usage, cost
 
 # Ожидаемый объём размышлений Qwen3 на одном фрагменте, токенов.
 THINK_TOKENS = 1000
@@ -30,6 +31,12 @@ REQUEST_OVERHEAD = 1.5
 USER_TEMPLATE_CHARS = 200
 # Разброс прогноза: длина размышлений и ответов сильно гуляет.
 LOW_FACTOR, HIGH_FACTOR = 0.6, 1.7
+
+# Облачный API (DeepSeek Flash): осторожные допущения, ETA уточнит их по факту.
+API_FIRST_TOKEN_SECONDS = 2.0
+API_TOKENS_PER_SECOND = 50.0
+API_THINK_TOKENS = {"low": 600, "high": 2500, "max": 6000}
+API_CHARS_PER_TOKEN = 3.8
 
 _BENCH_PREDICT = 48
 # Если токенов меньше, чем символы/6, число токенов недостоверно.
@@ -143,12 +150,54 @@ def estimate_chunks(
     return Estimate(len(chunks), total / len(chunks), total)
 
 
-class Eta:
-    """Оставшееся время: прогноз уточняется по фактическому времени фрагментов."""
+def estimate_api(
+    chunks: list[str],
+    *,
+    output_chars: int,
+    think: bool,
+    effort: str,
+    system_chars: int,
+    parallel: int,
+    model: str,
+) -> tuple[Estimate, float]:
+    """Прогноз времени и стоимости для облачного API (DeepSeek).
 
-    def __init__(self, remaining: int, prior_per_chunk: float) -> None:
+    Системный промпт одинаков во всех запросах: DeepSeek кеширует его, и после первой
+    волны параллельных запросов он оплачивается по тарифу «cache hit».
+    """
+    if not chunks:
+        return Estimate(0, 0.0, 0.0), 0.0
+    output_tokens = output_chars / API_CHARS_PER_TOKEN * 1.15
+    if think:
+        output_tokens += API_THINK_TOKENS.get(effort, 600)
+    per_chunk = API_FIRST_TOKEN_SECONDS + output_tokens / API_TOKENS_PER_SECOND
+    waves = -(-len(chunks) // max(parallel, 1))
+    estimate = Estimate(len(chunks), per_chunk, per_chunk * waves)
+
+    system_tokens = system_chars / API_CHARS_PER_TOKEN
+    cold = min(parallel, len(chunks))  # первая волна ещё не попадает в кеш
+    usage = Usage(
+        cache_hit=int(system_tokens * (len(chunks) - cold)),
+        cache_miss=int(
+            system_tokens * cold
+            + sum(len(chunk) + USER_TEMPLATE_CHARS for chunk in chunks) / API_CHARS_PER_TOKEN
+        ),
+        output=int(output_tokens * len(chunks)),
+    )
+    return estimate, cost(usage, model)
+
+
+class Eta:
+    """Оставшееся время: прогноз уточняется по фактическому времени фрагментов.
+
+    При параллельной обработке фрагменты идут «волнами», поэтому время делится на
+    число одновременных запросов.
+    """
+
+    def __init__(self, remaining: int, prior_per_chunk: float, parallel: int = 1) -> None:
         self.remaining = remaining
         self.prior = prior_per_chunk
+        self.parallel = max(parallel, 1)
         self.samples: list[float] = []
 
     def chunk_done(self, elapsed: float) -> None:
@@ -163,6 +212,8 @@ class Eta:
     def seconds_left(self, current_elapsed: float = 0.0) -> float:
         if not self.remaining:
             return 0.0
+        if self.parallel > 1:
+            return self.per_chunk * -(-self.remaining // self.parallel)
         current = max(self.per_chunk - current_elapsed, 0.0)
         return current + self.per_chunk * (self.remaining - 1)
 

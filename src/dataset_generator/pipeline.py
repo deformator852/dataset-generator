@@ -1,17 +1,29 @@
 """Конвейер обработки файла: текст → язык и тип датасета → фрагменты → модель → датасет."""
 
 import asyncio
+import json
 import time
 from collections.abc import AsyncIterator
 from dataclasses import dataclass
 from pathlib import Path
 
-from ollama import AsyncClient
-
+from dataset_generator.backends import (
+    Backend,
+    FatalBackendError,
+    GenerationError,
+    OllamaBackend,
+    Structured,
+)
 from dataset_generator.chunking import split_into_chunks, strip_references
 from dataset_generator.config import Settings
 from dataset_generator.dataset import DatasetWriter, base_fingerprint, file_sha256, find_auto_kind
-from dataset_generator.estimate import estimate_chunks, measure_speed, speed_cached, system_info
+from dataset_generator.estimate import (
+    estimate_api,
+    estimate_chunks,
+    measure_speed,
+    speed_cached,
+    system_info,
+)
 from dataset_generator.events import (
     AnalysisStarted,
     ChunkFailed,
@@ -34,13 +46,12 @@ from dataset_generator.kinds import AUTO, expected_output_chars, max_items_for, 
 from dataset_generator.language import Language, detect_language, language_from_code
 from dataset_generator.llm import (
     Generation,
-    GenerationError,
     SourceAnalysis,
-    Structured,
     analyze_source,
     generate_examples,
     generation_request,
 )
+from dataset_generator.pricing import Usage, cost, price_for
 
 _FALLBACK_KIND = "qa"
 _ANALYSIS_SAMPLES = 4
@@ -72,7 +83,7 @@ def resolve_input(raw: str, settings: Settings) -> list[Path]:
     return []
 
 
-async def process_file(job: Job, settings: Settings, client: AsyncClient) -> AsyncIterator[Event]:
+async def process_file(job: Job, settings: Settings, backend: Backend) -> AsyncIterator[Event]:
     path = job.path
     yield FileStarted(path)
     try:
@@ -104,31 +115,32 @@ async def process_file(job: Job, settings: Settings, client: AsyncClient) -> Asy
         yield AnalysisStarted(path)
         analysis: SourceAnalysis | None = None
         error = ""
+        spent = 0.0
         for think in _attempt_modes(settings):
             try:
                 async for event in analyze_source(
-                    client,
-                    settings,
-                    source=path.stem,
-                    samples=_samples(chunks),
-                    think=think,
+                    backend, source=path.stem, samples=_samples(chunks), think=think
                 ):
                     if isinstance(event, Structured):
                         analysis = event.value  # type: ignore[assignment]
+                        spent += _cost(event.usage, settings)
                     else:
                         yield event
                 break
             except GenerationError as exc:
                 error = str(exc)
-            except ConnectionError as exc:
-                yield FileFailed(path, f"lost connection to Ollama: {exc}")
+                spent += _cost(exc.usage, settings)
+            except FatalBackendError as exc:
+                yield FileFailed(path, str(exc))
                 return
         if analysis:
             run = analysis.kind
-            yield KindChosen(path, run, run_title(run), "auto", analysis.genre, analysis.reason)
+            yield KindChosen(
+                path, run, run_title(run), "auto", analysis.genre, analysis.reason, spent
+            )
         else:
             run = _FALLBACK_KIND
-            yield KindChosen(path, run, run_title(run), "fallback", reason=error)
+            yield KindChosen(path, run, run_title(run), "fallback", reason=error, cost=spent)
 
     writer = await asyncio.to_thread(
         DatasetWriter,
@@ -145,29 +157,55 @@ async def process_file(job: Job, settings: Settings, client: AsyncClient) -> Asy
     remaining = [index for index in range(total) if index not in writer.done]
     if remaining:
         try:
-            async for event in _estimate(path, run, language, chunks, remaining, settings, client):
+            async for event in _estimate(path, run, language, chunks, remaining, settings, backend):
                 yield event
-        except ConnectionError as exc:
-            yield FileFailed(path, f"lost connection to Ollama: {exc}")
+        except FatalBackendError as exc:
+            yield FileFailed(path, str(exc))
             return
 
+    async for event in _process_chunks(
+        path, run, language, chunks, remaining, writer, settings, backend
+    ):
+        yield event
+
+
+async def _process_chunks(
+    path: Path,
+    run: str,
+    language: Language,
+    chunks: list[str],
+    remaining: list[int],
+    writer: DatasetWriter,
+    settings: Settings,
+    backend: Backend,
+) -> AsyncIterator[Event]:
+    """Обрабатывает фрагменты, до `parallel` одновременно; события идут через очередь.
+
+    Каждый готовый фрагмент сразу записывается в датасет и отмечается в состоянии,
+    поэтому прерванную обработку можно продолжить с того же места.
+    """
+    total = len(chunks)
+    queue: asyncio.Queue[Event | None] = asyncio.Queue()
+    semaphore = asyncio.Semaphore(_parallel(settings))
+    write_lock = asyncio.Lock()
     failed = 0
-    for index, chunk in enumerate(chunks):
-        if index in writer.done:
-            continue
-        generation = None
+    spent = 0.0
+
+    async def process(index: int) -> None:
+        nonlocal failed, spent
         started = time.monotonic()
+        generation = None
         modes = _attempt_modes(settings)
         for attempt, think in enumerate(modes, 1):
-            yield ChunkStarted(index, total, think)
+            await queue.put(ChunkStarted(index, total, think))
             try:
                 async for event in generate_examples(
-                    client,
+                    backend,
                     settings,
                     run,
                     language,
                     source=path.stem,
-                    chunk=chunk,
+                    chunk=chunks[index],
                     index=index,
                     total=total,
                     think=think,
@@ -175,33 +213,65 @@ async def process_file(job: Job, settings: Settings, client: AsyncClient) -> Asy
                     if isinstance(event, Generation):
                         generation = event
                     else:
-                        yield event
+                        await queue.put(event)
                 break
             except GenerationError as exc:
+                lost = _cost(exc.usage, settings)
+                spent += lost
                 if attempt < len(modes):
-                    yield ChunkRetry(index, attempt, str(exc))
+                    await queue.put(ChunkRetry(index, attempt, str(exc), lost))
                 else:
-                    yield ChunkFailed(index, str(exc), time.monotonic() - started)
-            except ConnectionError as exc:
-                yield FileFailed(path, f"lost connection to Ollama: {exc}")
-                return
+                    await queue.put(ChunkFailed(index, str(exc), time.monotonic() - started, lost))
 
         if generation is None:
             failed += 1
-            continue
-        examples = generation.examples
-        written = await asyncio.to_thread(writer.add, index, examples)
-        yield ChunkFinished(
-            index,
-            total,
-            examples,
-            written,
-            generation.tokens,
-            generation.seconds,
-            time.monotonic() - started,
+            return
+        price = _cost(generation.usage, settings)
+        spent += price
+        async with write_lock:
+            written = await asyncio.to_thread(writer.add, index, generation.examples)
+        await queue.put(
+            ChunkFinished(
+                index,
+                total,
+                generation.examples,
+                written,
+                generation.tokens,
+                generation.seconds,
+                time.monotonic() - started,
+                price,
+            )
         )
 
-    yield FileFinished(path, writer.output_label, dict(writer.records), failed)
+    async def worker(index: int) -> None:
+        nonlocal failed
+        async with semaphore:
+            try:
+                await process(index)
+            except FatalBackendError as exc:
+                await queue.put(FileFailed(path, str(exc)))
+            except Exception as exc:  # ошибка одного фрагмента не должна ронять остальные
+                failed += 1
+                await queue.put(ChunkFailed(index, f"unexpected error: {exc!r}", 0.0))
+
+    tasks = [asyncio.create_task(worker(index)) for index in remaining]
+
+    async def close_queue() -> None:
+        await asyncio.gather(*tasks, return_exceptions=True)
+        await queue.put(None)
+
+    closer = asyncio.create_task(close_queue())
+    try:
+        while (event := await queue.get()) is not None:
+            yield event
+            if isinstance(event, FileFailed):
+                return
+    finally:
+        for task in tasks:
+            task.cancel()
+        closer.cancel()
+
+    yield FileFinished(path, writer.output_label, dict(writer.records), failed, spent)
 
 
 async def _estimate(
@@ -211,11 +281,14 @@ async def _estimate(
     chunks: list[str],
     remaining: list[int],
     settings: Settings,
-    client: AsyncClient,
+    backend: Backend,
 ) -> AsyncIterator[Event]:
-    """Замер скорости модели (раз за сеанс) и прогноз времени для оставшихся фрагментов."""
+    """Прогноз времени (и стоимости для API) для оставшихся фрагментов.
+
+    Локально — по замеру скорости модели (раз за сеанс), для API — по тарифам и
+    типичной скорости; в обоих случаях ETA потом уточняется по факту.
+    """
     max_items = max_items_for(run, settings.max_items)
-    # Замер — это запрос первого оставшегося фрагмента: тот же промпт и та же схема.
     first = remaining[0]
     messages, schema = generation_request(
         run,
@@ -226,20 +299,48 @@ async def _estimate(
         total=len(chunks),
         max_items=max_items,
     )
-    fresh = not speed_cached(settings)
-    if fresh:
-        yield SpeedMeasureStarted(path)
-    speed = await measure_speed(client, settings, messages, schema)
-    if fresh:
-        yield SpeedMeasured(speed, system_info())
-    estimate = estimate_chunks(
-        [chunks[index] for index in remaining],
-        speed,
-        output_chars=expected_output_chars(run, max_items),
+    left = [chunks[index] for index in remaining]
+    output_chars = expected_output_chars(run, max_items)
+
+    if isinstance(backend, OllamaBackend):
+        # Замер — это запрос первого оставшегося фрагмента: тот же промпт и та же схема.
+        fresh = not speed_cached(settings)
+        if fresh:
+            yield SpeedMeasureStarted(path)
+        speed = await measure_speed(backend.client, settings, messages, schema)
+        if fresh:
+            yield SpeedMeasured(speed, system_info())
+        estimate = estimate_chunks(
+            left,
+            speed,
+            output_chars=output_chars,
+            think=settings.think,
+            system_chars=len(messages[0]["content"]),
+        )
+        yield EstimateReady(path, estimate)
+        return
+
+    schema_chars = len(json.dumps(schema.model_json_schema(), separators=(",", ":")))
+    estimate, price = estimate_api(
+        left,
+        output_chars=output_chars,
         think=settings.think,
-        system_chars=len(messages[0]["content"]),
+        effort=settings.effort,
+        system_chars=len(messages[0]["content"]) + schema_chars,
+        parallel=_parallel(settings),
+        model=settings.model,
     )
-    yield EstimateReady(path, estimate)
+    known = price_for(settings.model) is not None
+    yield EstimateReady(path, estimate, _parallel(settings), price if known else None)
+
+
+def _parallel(settings: Settings) -> int:
+    # Локальная Ollama считает запросы по очереди — параллельность ей не помогает.
+    return 1 if settings.local else max(settings.parallel, 1)
+
+
+def _cost(usage: Usage | None, settings: Settings) -> float:
+    return cost(usage, settings.model) if usage else 0.0
 
 
 def _attempt_modes(settings: Settings) -> list[bool]:

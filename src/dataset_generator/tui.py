@@ -5,7 +5,6 @@ from collections import deque
 from pathlib import Path
 from typing import ClassVar
 
-from ollama import AsyncClient
 from rich.markup import escape
 from rich.text import Text
 from textual.app import App, ComposeResult
@@ -15,6 +14,7 @@ from textual.suggester import Suggester
 from textual.widgets import Footer, Header, Input, ProgressBar, RichLog, Static
 from textual.worker import Worker
 
+from dataset_generator.backends import Backend, ModelUnavailableError, create_backend
 from dataset_generator.config import Settings
 from dataset_generator.estimate import Eta, Speed, SystemInfo, format_duration
 from dataset_generator.events import (
@@ -39,8 +39,8 @@ from dataset_generator.events import (
 from dataset_generator.extract import is_supported
 from dataset_generator.kind_picker import KindPicker, describe_example
 from dataset_generator.kinds import MIXED, run_title
-from dataset_generator.llm import ModelUnavailableError, check_model
 from dataset_generator.pipeline import Job, process_file, resolve_input
+from dataset_generator.pricing import format_cost, is_peak, price_for
 
 
 class StreamView(VerticalScroll):
@@ -118,7 +118,7 @@ class PathSuggester(Suggester):
 
 class DatasetApp(App[None]):
     TITLE = "Dataset Generator"
-    SUB_TITLE = "forensic science datasets · Ollama"
+    SUB_TITLE = "forensic science datasets"
 
     CSS = """
     #path { margin: 0 1; }
@@ -148,7 +148,7 @@ class DatasetApp(App[None]):
         self.queue: deque[Job] = deque()
         self.current: Job | None = None
         self.current_details = ""
-        self.client: AsyncClient | None = None
+        self.backend: Backend | None = None
         self.model_ready = False
         self.worker: Worker[None] | None = None
         self.chunk_label = "—"
@@ -162,6 +162,12 @@ class DatasetApp(App[None]):
         self.speed: Speed | None = None
         self.eta: Eta | None = None
         self.estimate_label = "—"
+        # Параллельная обработка: какие фрагменты сейчас в работе (номер → время старта)
+        # и чей поток размышлений/ответа показываем (-1 — анализ источника).
+        self.inflight: dict[int, float] = {}
+        self.watch: int | None = None
+        self.spent = 0.0
+        self.estimated_cost: float | None = None
 
     def compose(self) -> ComposeResult:
         yield Header()
@@ -189,11 +195,14 @@ class DatasetApp(App[None]):
         yield Footer()
 
     def on_mount(self) -> None:
-        self.client = AsyncClient(host=self.settings.host)
+        self.backend = create_backend(self.settings)
+        self.sub_title = f"forensic science datasets · {self.backend.label}"
         self.query_one("#info").border_title = "Settings"
         self.query_one("#queue").border_title = "Queue"
         self.query_one("#stats").border_title = "Progress and time"
-        self.query_one("#hardware").border_title = "PC and model speed"
+        self.query_one("#hardware").border_title = (
+            "PC and model speed" if self.settings.local else "Model and cost"
+        )
         self.query_one("#thinking").border_title = "🧠 Model thinking"
         self.query_one("#answer").border_title = "📝 Model response (JSON)"
         self.query_one("#journal").border_title = "📚 Dataset and log"
@@ -276,10 +285,10 @@ class DatasetApp(App[None]):
             self.worker = self.run_worker(self.process_queue(), group="pipeline")
 
     async def process_queue(self) -> None:
-        assert self.client is not None
+        assert self.backend is not None
         if not self.model_ready:
             try:
-                warnings = await check_model(self.client, self.settings)
+                warnings = await self.backend.check()
             except ModelUnavailableError as exc:
                 self.log_line(f"✗ {exc}", "bold red")
                 self.log_line("Once fixed, press Enter in the empty input field.", "dim")
@@ -294,7 +303,7 @@ class DatasetApp(App[None]):
             self.current_details = ""
             self.refresh_sidebar()
             try:
-                async for event in process_file(self.current, self.settings, self.client):
+                async for event in process_file(self.current, self.settings, self.backend):
                     self.handle_event(event)
             except Exception as exc:  # показываем ошибку, а не роняем TUI
                 name = self.current.path.name
@@ -303,6 +312,8 @@ class DatasetApp(App[None]):
                 self.current = None
                 self.chunk_started_at = None
                 self.eta = None
+                self.inflight.clear()
+                self.watch = None
                 self.refresh_sidebar()
         self.notify("Queue finished", title="Done")
 
@@ -315,9 +326,11 @@ class DatasetApp(App[None]):
 
         match event:
             case ThinkingDelta():
-                thinking.append(event.text)
+                if event.index == self.watch:
+                    thinking.append(event.text)
             case ContentDelta():
-                answer.append(event.text)
+                if event.index == self.watch:
+                    answer.append(event.text)
             case FileStarted():
                 self.log_line(
                     Text.assemble(("▶ ", "bold"), (event.path.name, "bold"), " — extracting text…")
@@ -338,6 +351,7 @@ class DatasetApp(App[None]):
                 )
                 self.refresh_sidebar()
             case AnalysisStarted():
+                self.watch = -1
                 self.chunk_label = "analysing document"
                 self.chunk_started_at = time.monotonic()
                 thinking.reset()
@@ -347,6 +361,8 @@ class DatasetApp(App[None]):
                     "  🔎 The model is studying the document to choose a dataset type…", "dim"
                 )
             case KindChosen():
+                self.watch = None
+                self.spent += event.cost
                 self.chunk_started_at = None
                 self.current_details = f"{event.title} · {self.current_details}"
                 self.refresh_sidebar()
@@ -383,35 +399,51 @@ class DatasetApp(App[None]):
                 self.refresh_hardware()
             case EstimateReady():
                 estimate = event.estimate
-                self.eta = Eta(estimate.chunks, estimate.per_chunk)
+                self.eta = Eta(estimate.chunks, estimate.per_chunk, event.parallel)
                 self.estimate_label = format_duration(estimate.seconds)
+                self.estimated_cost = event.cost
+                parallel = f", {event.parallel} at a time" if event.parallel > 1 else ""
+                price = (
+                    f" Cost ≈ {format_cost(event.cost)} (rough)." if event.cost is not None else ""
+                )
                 self.log_line(
                     Text.assemble(
                         ("  ⏱ Time estimate: ", "bold"),
                         (estimate.label, "bold yellow"),
-                        f" — {estimate.chunks} fragments, ~{format_duration(estimate.per_chunk)} "
-                        "per fragment. Refined as work progresses.",
+                        f" — {estimate.chunks} fragments{parallel}, "
+                        f"~{format_duration(estimate.per_chunk)} per fragment.{price} "
+                        "Refined as work progresses.",
                     )
                 )
             case ChunkStarted():
-                self.chunk_label = f"{event.index + 1}/{event.total}"
-                self.chunk_started_at = time.monotonic()
-                thinking.reset("" if event.think else "(thinking is off — answering directly)")
-                answer.reset()
-                mode = "" if event.think else " · no thinking"
-                thinking.border_subtitle = f"fragment {self.chunk_label}{mode}"
+                self.inflight[event.index] = time.monotonic()
+                # Показываем поток одного фрагмента; следующий — когда этот закончится.
+                if self.watch is None or self.watch not in self.inflight:
+                    self.watch = event.index
+                if event.index == self.watch:
+                    self.chunk_label = f"{event.index + 1}/{event.total}"
+                    self.chunk_started_at = time.monotonic()
+                    thinking.reset("" if event.think else "(thinking is off — answering directly)")
+                    answer.reset()
+                    mode = "" if event.think else " · no thinking"
+                    thinking.border_subtitle = f"fragment {self.chunk_label}{mode}"
             case ChunkRetry():
+                self.spent += event.cost
                 self.log_line(
                     f"! Fragment {event.index + 1}: {event.reason} — retrying "
                     f"(attempt {event.attempt + 1})",
                     "yellow",
                 )
             case ChunkFinished():
+                self.chunk_ended(event.index)
+                self.spent += event.cost
                 self.on_chunk_finished(event)
                 progress.advance(1)
                 if self.eta:
                     self.eta.chunk_done(event.elapsed)
             case ChunkFailed():
+                self.chunk_ended(event.index)
+                self.spent += event.cost
                 self.chunks_failed += 1
                 progress.advance(1)
                 if self.eta:
@@ -428,8 +460,10 @@ class DatasetApp(App[None]):
                 if len(event.records) > 1:
                     parts = [f"{run_title(k)}: {n}" for k, n in event.records.items() if n]
                     by_kind = f" ({', '.join(parts)})" if parts else ""
+                priced = price_for(self.settings.model) is not None
+                spent = f", cost {format_cost(event.cost)}" if priced else ""
                 self.log_line(
-                    f"✔ {event.path.name}: {total} examples in total{by_kind}{failed} → "
+                    f"✔ {event.path.name}: {total} examples in total{by_kind}{failed}{spent} → "
                     f"{event.output}",
                     "bold green",
                 )
@@ -438,10 +472,15 @@ class DatasetApp(App[None]):
         if not isinstance(event, ThinkingDelta | ContentDelta):
             self.refresh_stats()
 
+    def chunk_ended(self, index: int) -> None:
+        self.inflight.pop(index, None)
+        if index == self.watch:
+            self.watch = None
+            self.chunk_started_at = None
+
     def on_chunk_finished(self, event: ChunkFinished) -> None:
         self.chunks_done += 1
         self.examples_written += event.written
-        self.chunk_started_at = None
         if event.seconds > 0:
             self.last_speed = event.tokens / event.seconds
         if not event.examples:
@@ -471,11 +510,18 @@ class DatasetApp(App[None]):
         think = "[green]on[/]" if s.think else "[red]off[/]"
         kind = "ask" if s.dataset_kind is None else run_title(s.dataset_kind)
         language = "same as source" if s.language == "auto" else escape(s.language)
+        if s.local:
+            engine = f"Threads:  {s.threads or 'auto'}\n"
+        else:
+            think += f" [dim]({s.effort})[/]" if s.think else ""
+            engine = f"Parallel: {s.parallel} requests\n"
+        provider = self.backend.label if self.backend else s.provider
         self.query_one("#info", Static).update(
+            f"Provider: {escape(provider)}\n"
             f"Model:    [b]{escape(s.model)}[/] "
             f"{'' if self.model_ready else '[dim](not checked)[/]'}\n"
             f"Thinking: {think} [dim](F2)[/]\n"
-            f"Threads:  {s.threads or 'auto'}\n"
+            f"{engine}"
             f"Type:     {kind}\n"
             f"Language: {language}\n"
             f"Fragment: {s.chunk_size} chars{' + system' if s.include_system else ''}\n"
@@ -505,8 +551,21 @@ class DatasetApp(App[None]):
             left = f"≈ {format_duration(self.eta.seconds_left(current))}"
         elif self.eta:
             left = "done"
+        busy = len(self.inflight)
+        in_progress = f" [dim](+{busy - 1} in parallel)[/]" if busy > 1 else ""
+        if price_for(self.settings.model) is None:
+            money = ""
+        else:
+            estimate = (
+                f" of ≈ {format_cost(self.estimated_cost)}"
+                if self.estimated_cost is not None
+                else ""
+            )
+            money = f"Cost:          [b]{format_cost(self.spent)}[/]{estimate}\n"
+            self.refresh_hardware()  # там тоже стоимость и текущий тариф
         self.query_one("#stats", Static).update(
-            f"Fragment:      {self.chunk_label}{elapsed}\n"
+            f"Fragment:      {self.chunk_label}{elapsed}{in_progress}\n"
+            f"{money}"
             f"Examples:      [b green]{self.examples_written}[/]\n"
             f"Processed:     {self.chunks_done}\n"
             f"No content:    {self.chunks_empty}\n"
@@ -525,6 +584,23 @@ class DatasetApp(App[None]):
         )
 
     def refresh_hardware(self) -> None:
+        if not self.settings.local:
+            s = self.settings
+            price = price_for(s.model)
+            tariff = "peak hours" if is_peak() else "off-peak (−50%)"
+            lines = [
+                f"{escape(self.backend.label if self.backend else s.provider)} · {escape(s.model)}",
+                f"{s.parallel} requests at a time",
+            ]
+            if price:
+                lines += [
+                    f"tariff now: {tariff}",
+                    f"$/1M: in {price.cache_miss:g} · cached {price.cache_hit:g} · "
+                    f"out {price.output:g}",
+                ]
+            lines.append(f"spent this session: [b]{format_cost(self.spent)}[/]")
+            self.query_one("#hardware", Static).update("\n".join(lines))
+            return
         lines = []
         if self.system:
             lines += [

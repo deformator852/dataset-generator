@@ -1,9 +1,18 @@
 import argparse
 import asyncio
+import os
 import sys
 from pathlib import Path
 
-from dataset_generator.config import DATASET_FORMATS, Settings
+from dataset_generator.config import (
+    DATASET_FORMATS,
+    DEEPSEEK_BASE_URL,
+    DEEPSEEK_KEY_ENV,
+    DEFAULT_MODELS,
+    EFFORTS,
+    PROVIDERS,
+    Settings,
+)
 from dataset_generator.extract import SUPPORTED_SUFFIXES, is_supported
 from dataset_generator.kinds import AUTO, KINDS, MIXED
 from dataset_generator.pipeline import resolve_input
@@ -15,7 +24,7 @@ def build_parser() -> argparse.ArgumentParser:
         prog="dataset-generator",
         description=(
             "Turns articles, studies, books and other documents into forensic science "
-            "training datasets using a local model in Ollama."
+            "training datasets using DeepSeek (cloud API) or a local model in Ollama."
         ),
         epilog="Supported formats: " + ", ".join(sorted(SUPPORTED_SUFFIXES)),
     )
@@ -25,9 +34,40 @@ def build_parser() -> argparse.ArgumentParser:
         help="file names (also looked up in --input-dir) or folders; "
         "without arguments the TUI asks for a file",
     )
-    parser.add_argument("-m", "--model", default=defaults.model, help="Ollama model (%(default)s)")
     parser.add_argument(
-        "--host", default=None, help="Ollama address (default: OLLAMA_HOST or localhost:11434)"
+        "-p",
+        "--provider",
+        choices=PROVIDERS,
+        default=defaults.provider,
+        help=f"where the model runs: deepseek — cloud API (key in {DEEPSEEK_KEY_ENV}), "
+        "ollama — locally (%(default)s)",
+    )
+    parser.add_argument(
+        "-m",
+        "--model",
+        default=None,
+        help="model name (default: "
+        + ", ".join(f"{p} — {m}" for p, m in DEFAULT_MODELS.items())
+        + ")",
+    )
+    parser.add_argument(
+        "--host",
+        default=None,
+        help=f"API address (default: {DEEPSEEK_BASE_URL}) or Ollama address "
+        "(default: OLLAMA_HOST or localhost:11434)",
+    )
+    parser.add_argument(
+        "-j",
+        "--parallel",
+        type=int,
+        default=defaults.parallel,
+        help="fragments processed at once with the API (%(default)s; Ollama always uses 1)",
+    )
+    parser.add_argument(
+        "--effort",
+        choices=EFFORTS,
+        default=defaults.effort,
+        help="DeepSeek thinking depth (%(default)s): higher is slower and costs more",
     )
     parser.add_argument(
         "-i",
@@ -116,10 +156,12 @@ def build_parser() -> argparse.ArgumentParser:
     thinking.add_argument(
         "--think",
         action="store_true",
-        help="enable Qwen3 thinking mode (better reasoning, about twice as slow)",
+        help="enable thinking mode (default for DeepSeek; locally about twice as slow)",
     )
     thinking.add_argument(
-        "--no-think", action="store_true", help="disable thinking mode (the default)"
+        "--no-think",
+        action="store_true",
+        help="disable thinking mode (default for Ollama; with DeepSeek cheaper and faster)",
     )
     parser.add_argument(
         "--no-tui", action="store_true", help="plain streaming terminal output instead of the TUI"
@@ -136,10 +178,21 @@ def main(argv: list[str] | None = None) -> None:
         parser.error("--overlap must be between 0 and half of --chunk-size")
     if (args.max_items is not None and args.max_items < 1) or args.retries < 0:
         parser.error("--max-items must be ≥ 1 and --retries ≥ 0")
+    if args.parallel < 1:
+        parser.error("--parallel must be ≥ 1")
+    if args.think:
+        think = True
+    elif args.no_think:
+        think = False
+    else:
+        # Мышление у DeepSeek стоит центы, а на локальном CPU почти удваивает время.
+        think = args.provider == "deepseek"
 
     settings = Settings(
-        model=args.model,
+        provider=args.provider,
+        model=args.model or DEFAULT_MODELS[args.provider],
         host=args.host,
+        api_key=os.environ.get(DEEPSEEK_KEY_ENV) if args.provider == "deepseek" else None,
         input_dir=args.input_dir,
         output_dir=args.output_dir,
         dataset_kind=args.kind,
@@ -151,8 +204,10 @@ def main(argv: list[str] | None = None) -> None:
         max_items=args.max_items,
         num_ctx=args.num_ctx,
         num_predict=args.num_predict,
-        think=args.think,
+        think=think,
+        effort=args.effort,
         retries=args.retries,
+        parallel=args.parallel,
         threads=args.threads,
     )
     settings.input_dir.mkdir(parents=True, exist_ok=True)

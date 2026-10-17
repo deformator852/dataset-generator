@@ -38,6 +38,7 @@ class KindChosen:
     how: Literal["user", "auto", "resumed", "fallback"]
     genre: str = ""
     reason: str = ""
+    cost: float = 0.0  # стоимость анализа (API), $
 
 
 @dataclass(slots=True, frozen=True)
@@ -63,6 +64,8 @@ class SpeedMeasured:
 class EstimateReady:
     path: Path
     estimate: Estimate
+    parallel: int = 1
+    cost: float | None = None  # ожидаемая стоимость оставшихся фрагментов (API), $
 
 
 @dataclass(slots=True, frozen=True)
@@ -75,11 +78,13 @@ class ChunkStarted:
 @dataclass(slots=True, frozen=True)
 class ThinkingDelta:
     text: str
+    index: int = -1  # номер фрагмента; -1 — анализ источника
 
 
 @dataclass(slots=True, frozen=True)
 class ContentDelta:
     text: str
+    index: int = -1
 
 
 @dataclass(slots=True, frozen=True)
@@ -87,6 +92,7 @@ class ChunkRetry:
     index: int
     attempt: int
     reason: str
+    cost: float = 0.0  # неудачная попытка тоже оплачена
 
 
 @dataclass(slots=True, frozen=True)
@@ -98,6 +104,7 @@ class ChunkFinished:
     tokens: int
     seconds: float  # последняя (удачная) попытка
     elapsed: float  # все попытки вместе — для уточнения оставшегося времени
+    cost: float = 0.0  # $, последняя попытка
 
 
 @dataclass(slots=True, frozen=True)
@@ -105,6 +112,7 @@ class ChunkFailed:
     index: int
     reason: str
     elapsed: float
+    cost: float = 0.0
 
 
 @dataclass(slots=True, frozen=True)
@@ -113,6 +121,7 @@ class FileFinished:
     output: str
     records: dict[str, int]  # тип датасета → число примеров
     failed_chunks: int
+    cost: float = 0.0  # $ за этот запуск
 
 
 @dataclass(slots=True, frozen=True)
