@@ -1,7 +1,7 @@
-"""Бэкенды модели: DeepSeek API (по умолчанию) и локальная Ollama.
+"""Работа с DeepSeek API (подходит и любой другой OpenAI-совместимый API).
 
-Оба отдают одинаковый поток событий: размышления, ответ и в конце ответ, разобранный
-по JSON-схеме. Остальная программа не знает, где работает модель.
+Бэкенд отдаёт поток событий: размышления, ответ и в конце ответ, разобранный по
+JSON-схеме. Остальная программа не зависит от того, какой API за ним стоит.
 """
 
 import json
@@ -10,7 +10,6 @@ import time
 from collections.abc import AsyncIterator
 from dataclasses import dataclass
 
-from ollama import AsyncClient, ResponseError
 from openai import (
     APIConnectionError,
     APIStatusError,
@@ -34,7 +33,7 @@ class GenerationError(Exception):
 
 
 class FatalBackendError(Exception):
-    """Продолжать бессмысленно: нет связи с Ollama, неверный ключ, кончились деньги."""
+    """Продолжать бессмысленно: неверный ключ, кончились деньги."""
 
 
 class ModelUnavailableError(Exception):
@@ -63,81 +62,11 @@ class Backend:
 
 
 def create_backend(settings: Settings) -> Backend:
-    return OllamaBackend(settings) if settings.local else DeepSeekBackend(settings)
-
-
-class OllamaBackend(Backend):
-    label = "Ollama (local)"
-
-    def __init__(self, settings: Settings) -> None:
-        self.settings = settings
-        self.client = AsyncClient(host=settings.host)
-
-    async def check(self) -> list[str]:
-        settings = self.settings
-        try:
-            info = await self.client.show(settings.model)
-        except ConnectionError as exc:
-            raise ModelUnavailableError(
-                "Ollama is not responding. Start it: sudo systemctl start ollama (or ollama serve)"
-            ) from exc
-        except ResponseError as exc:
-            if exc.status_code == 404:
-                raise ModelUnavailableError(
-                    f"model {settings.model} not found. Download it: ollama pull {settings.model}"
-                ) from exc
-            raise ModelUnavailableError(f"Ollama: {exc.error}") from exc
-
-        warnings = []
-        settings.think_supported = "thinking" in (info.capabilities or [])
-        if settings.think and not settings.think_supported:
-            settings.think = False
-            warnings.append(f"model {settings.model} does not support thinking mode — it is off")
-        return warnings
-
-    async def stream(
-        self, messages: list[dict[str, str]], schema: type[BaseModel], *, think: bool
-    ) -> AsyncIterator[ThinkingDelta | ContentDelta | Structured]:
-        settings = self.settings
-        started = time.monotonic()
-        tokens = 0
-        content: list[str] = []
-        done_reason = None
-        try:
-            stream = await self.client.chat(
-                model=settings.model,
-                messages=messages,
-                # Моделям без режима мышления (например, Qwen3 Instruct-2507) его не передаём.
-                think=think if settings.think_supported else None,
-                format=schema.model_json_schema(),
-                options=settings.sampling_options(think),
-                stream=True,
-            )
-            async for part in stream:
-                if part.message.thinking:
-                    tokens += 1
-                    yield ThinkingDelta(part.message.thinking)
-                if part.message.content:
-                    tokens += 1
-                    content.append(part.message.content)
-                    yield ContentDelta(part.message.content)
-                if part.done:
-                    done_reason = part.done_reason
-        except ResponseError as exc:
-            raise GenerationError(f"Ollama: {exc.error}") from exc
-        except ConnectionError as exc:
-            raise FatalBackendError(f"lost connection to Ollama: {exc}") from exc
-
-        if done_reason == "length":
-            raise GenerationError(
-                "response truncated: the model hit the token limit (increase --num-predict)"
-            )
-        value = _parse(schema, "".join(content))
-        yield Structured(value, tokens, time.monotonic() - started)
+    return DeepSeekBackend(settings)
 
 
 class DeepSeekBackend(Backend):
-    """DeepSeek и любой другой OpenAI-совместимый API (адрес задаётся через --host)."""
+    """DeepSeek и любой другой OpenAI-совместимый API (адрес задаётся через --api-url)."""
 
     label = "DeepSeek API"
 
@@ -145,7 +74,7 @@ class DeepSeekBackend(Backend):
         self.settings = settings
         self.client = AsyncOpenAI(
             api_key=settings.api_key or "missing",
-            base_url=settings.host or DEEPSEEK_BASE_URL,
+            base_url=settings.api_url or DEEPSEEK_BASE_URL,
             max_retries=3,  # 429 и 5xx SDK повторяет сам, с паузой
             timeout=600,
         )
@@ -155,7 +84,7 @@ class DeepSeekBackend(Backend):
         if not settings.api_key:
             raise ModelUnavailableError(
                 f"no API key: set {DEEPSEEK_KEY_ENV} (create a key at "
-                "https://platform.deepseek.com/api_keys), or use --provider ollama"
+                "https://platform.deepseek.com/api_keys)"
             )
         try:
             page = await self.client.models.list()
@@ -212,7 +141,7 @@ class DeepSeekBackend(Backend):
                     usage = _usage(chunk.usage)
                 for choice in chunk.choices:
                     delta = choice.delta
-                    # DeepSeek: reasoning_content; Ollama /v1 и другие: reasoning
+                    # DeepSeek: reasoning_content; некоторые другие API: reasoning
                     reasoning = getattr(delta, "reasoning_content", None) or getattr(
                         delta, "reasoning", None
                     )

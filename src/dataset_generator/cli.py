@@ -8,9 +8,7 @@ from dataset_generator.config import (
     DATASET_FORMATS,
     DEEPSEEK_BASE_URL,
     DEEPSEEK_KEY_ENV,
-    DEFAULT_MODELS,
     EFFORTS,
-    PROVIDERS,
     Settings,
 )
 from dataset_generator.extract import SUPPORTED_SUFFIXES, is_supported
@@ -24,7 +22,7 @@ def build_parser() -> argparse.ArgumentParser:
         prog="dataset-generator",
         description=(
             "Turns articles, studies, books and other documents into forensic science "
-            "training datasets using DeepSeek (cloud API) or a local model in Ollama."
+            f"training datasets using the DeepSeek API (key in {DEEPSEEK_KEY_ENV})."
         ),
         epilog="Supported formats: " + ", ".join(sorted(SUPPORTED_SUFFIXES)),
     )
@@ -35,39 +33,28 @@ def build_parser() -> argparse.ArgumentParser:
         "without arguments the TUI asks for a file",
     )
     parser.add_argument(
-        "-p",
-        "--provider",
-        choices=PROVIDERS,
-        default=defaults.provider,
-        help=f"where the model runs: deepseek — cloud API (key in {DEEPSEEK_KEY_ENV}), "
-        "ollama — locally (%(default)s)",
-    )
-    parser.add_argument(
         "-m",
         "--model",
-        default=None,
-        help="model name (default: "
-        + ", ".join(f"{p} — {m}" for p, m in DEFAULT_MODELS.items())
-        + ")",
+        default=defaults.model,
+        help="DeepSeek model: deepseek-flash or deepseek-v4-pro (%(default)s)",
     )
     parser.add_argument(
-        "--host",
+        "--api-url",
         default=None,
-        help=f"API address (default: {DEEPSEEK_BASE_URL}) or Ollama address "
-        "(default: OLLAMA_HOST or localhost:11434)",
+        help=f"API address (default: {DEEPSEEK_BASE_URL}; any OpenAI-compatible API works)",
     )
     parser.add_argument(
         "-j",
         "--parallel",
         type=int,
         default=defaults.parallel,
-        help="fragments processed at once with the API (%(default)s; Ollama always uses 1)",
+        help="fragments sent to the API at once (%(default)s)",
     )
     parser.add_argument(
         "--effort",
         choices=EFFORTS,
         default=defaults.effort,
-        help="DeepSeek thinking depth (%(default)s): higher is slower and costs more",
+        help="thinking depth (%(default)s): higher is slower and costs more",
     )
     parser.add_argument(
         "-i",
@@ -128,16 +115,10 @@ def build_parser() -> argparse.ArgumentParser:
         help="max examples per fragment (default depends on the type)",
     )
     parser.add_argument(
-        "--num-ctx",
-        type=int,
-        default=defaults.num_ctx,
-        help="model context window in tokens (%(default)s)",
-    )
-    parser.add_argument(
         "--num-predict",
         type=int,
         default=defaults.num_predict,
-        help="generated token limit, including thinking (%(default)s)",
+        help="generated token limit per fragment; doubled with thinking (%(default)s)",
     )
     parser.add_argument(
         "--retries",
@@ -145,26 +126,19 @@ def build_parser() -> argparse.ArgumentParser:
         default=defaults.retries,
         help="retries on generation errors (%(default)s)",
     )
-    parser.add_argument(
-        "-t",
-        "--threads",
-        type=int,
-        default=None,
-        help="CPU threads for the model (default: Ollama decides, usually only performance cores)",
-    )
     thinking = parser.add_mutually_exclusive_group()
     thinking.add_argument(
         "--think",
         action="store_true",
-        help="enable thinking mode (default for DeepSeek; locally about twice as slow)",
+        help="enable thinking mode (the default)",
     )
     thinking.add_argument(
         "--no-think",
         action="store_true",
-        help="disable thinking mode (default for Ollama; with DeepSeek cheaper and faster)",
+        help="disable thinking mode: cheaper and faster, slightly less accurate",
     )
     parser.add_argument(
-        "--no-tui", action="store_true", help="plain streaming terminal output instead of the TUI"
+        "--no-tui", action="store_true", help="plain terminal output instead of the TUI"
     )
     return parser
 
@@ -180,19 +154,11 @@ def main(argv: list[str] | None = None) -> None:
         parser.error("--max-items must be ≥ 1 and --retries ≥ 0")
     if args.parallel < 1:
         parser.error("--parallel must be ≥ 1")
-    if args.think:
-        think = True
-    elif args.no_think:
-        think = False
-    else:
-        # Мышление у DeepSeek стоит центы, а на локальном CPU почти удваивает время.
-        think = args.provider == "deepseek"
 
     settings = Settings(
-        provider=args.provider,
-        model=args.model or DEFAULT_MODELS[args.provider],
-        host=args.host,
-        api_key=os.environ.get(DEEPSEEK_KEY_ENV) if args.provider == "deepseek" else None,
+        model=args.model,
+        api_url=args.api_url,
+        api_key=os.environ.get(DEEPSEEK_KEY_ENV),
         input_dir=args.input_dir,
         output_dir=args.output_dir,
         dataset_kind=args.kind,
@@ -202,13 +168,11 @@ def main(argv: list[str] | None = None) -> None:
         chunk_size=args.chunk_size,
         chunk_overlap=args.overlap,
         max_items=args.max_items,
-        num_ctx=args.num_ctx,
         num_predict=args.num_predict,
-        think=think,
+        think=not args.no_think,
         effort=args.effort,
         retries=args.retries,
         parallel=args.parallel,
-        threads=args.threads,
     )
     settings.input_dir.mkdir(parents=True, exist_ok=True)
     settings.output_dir.mkdir(parents=True, exist_ok=True)

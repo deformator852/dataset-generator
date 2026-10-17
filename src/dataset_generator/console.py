@@ -23,8 +23,6 @@ from dataset_generator.events import (
     FileLoaded,
     FileStarted,
     KindChosen,
-    SpeedMeasured,
-    SpeedMeasureStarted,
     TextExtracted,
     ThinkingDelta,
 )
@@ -81,7 +79,7 @@ async def run_console(settings: Settings, files: list[Path]) -> int:
         return 1
     # При параллельных запросах токены разных фрагментов перемешались бы — тогда
     # печатаем только итог по каждому фрагменту.
-    live = settings.local or settings.parallel == 1
+    live = settings.parallel == 1
     priced = price_for(settings.model) is not None
     spent = 0.0
     line_prefix = "\n" if live else ""
@@ -145,17 +143,6 @@ async def run_console(settings: Settings, files: list[Path]) -> int:
                 case FileLoaded():
                     line(f"Already done: {event.already_done}. Dataset: {event.output}", "dim")
                     eta = None
-                case SpeedMeasureStarted():
-                    line("⏱ Measuring model speed on this PC…", "dim")
-                case SpeedMeasured():
-                    speed = event.speed
-                    basis = "measured" if speed.measured else "rough hardware estimate"
-                    line(f"💻 {event.system.label}", "dim")
-                    line(
-                        f"⏱ Reading {speed.prompt_tps:.0f} tok/s, generation {speed.gen_tps:.1f} "
-                        f"tok/s ({basis}), {speed.device}",
-                        "dim",
-                    )
                 case EstimateReady():
                     estimate = event.estimate
                     eta = Eta(estimate.chunks, estimate.per_chunk, event.parallel)

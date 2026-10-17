@@ -385,7 +385,7 @@ MIXED_MAX_KINDS = 2
 # ограничивает выбор двумя типами, а примеры невыбранных типов программа отбрасывает.
 MIXED_RESULT = create_model(
     "MixedResult",
-    # maxItems — только подсказка для грамматики Ollama; лишнее обрезаем сами, а не
+    # maxItems — только подсказка модели; лишнее обрезаем сами, а не
     # роняем ответ валидацией.
     selected=(
         list[Literal[tuple(KINDS)]],  # type: ignore[valid-type]

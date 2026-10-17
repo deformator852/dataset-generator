@@ -16,7 +16,7 @@ from textual.worker import Worker
 
 from dataset_generator.backends import Backend, ModelUnavailableError, create_backend
 from dataset_generator.config import Settings
-from dataset_generator.estimate import Eta, Speed, SystemInfo, format_duration
+from dataset_generator.estimate import Eta, format_duration
 from dataset_generator.events import (
     AnalysisStarted,
     ChunkFailed,
@@ -31,8 +31,6 @@ from dataset_generator.events import (
     FileLoaded,
     FileStarted,
     KindChosen,
-    SpeedMeasured,
-    SpeedMeasureStarted,
     TextExtracted,
     ThinkingDelta,
 )
@@ -158,8 +156,6 @@ class DatasetApp(App[None]):
         self.chunks_empty = 0
         self.chunks_failed = 0
         self.last_speed: float | None = None
-        self.system: SystemInfo | None = None
-        self.speed: Speed | None = None
         self.eta: Eta | None = None
         self.estimate_label = "—"
         # Параллельная обработка: какие фрагменты сейчас в работе (номер → время старта)
@@ -200,9 +196,7 @@ class DatasetApp(App[None]):
         self.query_one("#info").border_title = "Settings"
         self.query_one("#queue").border_title = "Queue"
         self.query_one("#stats").border_title = "Progress and time"
-        self.query_one("#hardware").border_title = (
-            "PC and model speed" if self.settings.local else "Model and cost"
-        )
+        self.query_one("#hardware").border_title = "Model and cost"
         self.query_one("#thinking").border_title = "🧠 Model thinking"
         self.query_one("#answer").border_title = "📝 Model response (JSON)"
         self.query_one("#journal").border_title = "📚 Dataset and log"
@@ -387,16 +381,6 @@ class DatasetApp(App[None]):
                 resumed = f"resuming from {event.already_done}. " if event.already_done else ""
                 self.log_line(f"  {resumed}Dataset: {event.output}", "dim")
                 self.estimate_label = "—"
-            case SpeedMeasureStarted():
-                self.chunk_label = "measuring speed"
-                self.chunk_started_at = time.monotonic()
-                self.log_line("  ⏱ Measuring model speed on this PC (once per session)…", "dim")
-            case SpeedMeasured():
-                self.chunk_started_at = None
-                self.speed, self.system = event.speed, event.system
-                self.log_line(f"  💻 {event.system.label}", "dim")
-                self.log_line(f"  ⏱ {self.speed_label(event.speed)}", "dim")
-                self.refresh_hardware()
             case EstimateReady():
                 estimate = event.estimate
                 self.eta = Eta(estimate.chunks, estimate.per_chunk, event.parallel)
@@ -510,18 +494,12 @@ class DatasetApp(App[None]):
         think = "[green]on[/]" if s.think else "[red]off[/]"
         kind = "ask" if s.dataset_kind is None else run_title(s.dataset_kind)
         language = "same as source" if s.language == "auto" else escape(s.language)
-        if s.local:
-            engine = f"Threads:  {s.threads or 'auto'}\n"
-        else:
-            think += f" [dim]({s.effort})[/]" if s.think else ""
-            engine = f"Parallel: {s.parallel} requests\n"
-        provider = self.backend.label if self.backend else s.provider
+        think += f" [dim]({s.effort})[/]" if s.think else ""
         self.query_one("#info", Static).update(
-            f"Provider: {escape(provider)}\n"
             f"Model:    [b]{escape(s.model)}[/] "
             f"{'' if self.model_ready else '[dim](not checked)[/]'}\n"
             f"Thinking: {think} [dim](F2)[/]\n"
-            f"{engine}"
+            f"Parallel: {s.parallel} requests\n"
             f"Type:     {kind}\n"
             f"Language: {language}\n"
             f"Fragment: {s.chunk_size} chars{' + system' if s.include_system else ''}\n"
@@ -575,48 +553,22 @@ class DatasetApp(App[None]):
             f"Time left:     [b yellow]{left}[/]"
         )
 
-    @staticmethod
-    def speed_label(speed: Speed) -> str:
-        basis = "measured" if speed.measured else "rough hardware estimate"
-        return (
-            f"Reading {speed.prompt_tps:.0f} tok/s, generation {speed.gen_tps:.1f} tok/s "
-            f"({basis}), {speed.device}"
-        )
-
     def refresh_hardware(self) -> None:
-        if not self.settings.local:
-            s = self.settings
-            price = price_for(s.model)
-            tariff = "peak hours" if is_peak() else "off-peak (−50%)"
-            lines = [
-                f"{escape(self.backend.label if self.backend else s.provider)} · {escape(s.model)}",
-                f"{s.parallel} requests at a time",
-            ]
-            if price:
-                lines += [
-                    f"tariff now: {tariff}",
-                    f"$/1M: in {price.cache_miss:g} · cached {price.cache_hit:g} · "
-                    f"out {price.output:g}",
-                ]
-            lines.append(f"spent this session: [b]{format_cost(self.spent)}[/]")
-            self.query_one("#hardware", Static).update("\n".join(lines))
-            return
-        lines = []
-        if self.system:
+        s = self.settings
+        price = price_for(s.model)
+        tariff = "peak hours" if is_peak() else "off-peak (−50%)"
+        lines = [
+            f"{escape(self.backend.label if self.backend else 'API')} · {escape(s.model)}",
+            f"{s.parallel} requests at a time",
+        ]
+        if price:
             lines += [
-                escape(self.system.cpu),
-                f"{self.system.threads} threads · {self.system.ram_total_gb:.0f} GB RAM",
+                f"tariff now: {tariff}",
+                f"$/1M: in {price.cache_miss:g} · cached {price.cache_hit:g} · "
+                f"out {price.output:g}",
             ]
-        if self.speed:
-            basis = "" if self.speed.measured else " [dim](rough)[/]"
-            lines += [
-                escape(self.speed.device),
-                f"reading:    {self.speed.prompt_tps:.0f} tok/s{basis}",
-                f"generation: {self.speed.gen_tps:.1f} tok/s{basis}",
-            ]
-        self.query_one("#hardware", Static).update(
-            "\n".join(lines) or "[dim]measured on the first file[/]"
-        )
+        lines.append(f"spent this session: [b]{format_cost(self.spent)}[/]")
+        self.query_one("#hardware", Static).update("\n".join(lines))
 
     # --- действия ------------------------------------------------------------
 

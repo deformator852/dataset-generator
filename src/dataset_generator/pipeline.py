@@ -7,23 +7,11 @@ from collections.abc import AsyncIterator
 from dataclasses import dataclass
 from pathlib import Path
 
-from dataset_generator.backends import (
-    Backend,
-    FatalBackendError,
-    GenerationError,
-    OllamaBackend,
-    Structured,
-)
+from dataset_generator.backends import Backend, FatalBackendError, GenerationError, Structured
 from dataset_generator.chunking import split_into_chunks, strip_references
 from dataset_generator.config import Settings
 from dataset_generator.dataset import DatasetWriter, base_fingerprint, file_sha256, find_auto_kind
-from dataset_generator.estimate import (
-    estimate_api,
-    estimate_chunks,
-    measure_speed,
-    speed_cached,
-    system_info,
-)
+from dataset_generator.estimate import estimate_api
 from dataset_generator.events import (
     AnalysisStarted,
     ChunkFailed,
@@ -37,8 +25,6 @@ from dataset_generator.events import (
     FileLoaded,
     FileStarted,
     KindChosen,
-    SpeedMeasured,
-    SpeedMeasureStarted,
     TextExtracted,
 )
 from dataset_generator.extract import ExtractionError, extract_text, is_supported
@@ -156,12 +142,8 @@ async def process_file(job: Job, settings: Settings, backend: Backend) -> AsyncI
 
     remaining = [index for index in range(total) if index not in writer.done]
     if remaining:
-        try:
-            async for event in _estimate(path, run, language, chunks, remaining, settings, backend):
-                yield event
-        except FatalBackendError as exc:
-            yield FileFailed(path, str(exc))
-            return
+        async for event in _estimate(path, run, language, chunks, remaining, settings):
+            yield event
 
     async for event in _process_chunks(
         path, run, language, chunks, remaining, writer, settings, backend
@@ -186,7 +168,7 @@ async def _process_chunks(
     """
     total = len(chunks)
     queue: asyncio.Queue[Event | None] = asyncio.Queue()
-    semaphore = asyncio.Semaphore(_parallel(settings))
+    semaphore = asyncio.Semaphore(max(settings.parallel, 1))
     write_lock = asyncio.Lock()
     failed = 0
     spent = 0.0
@@ -281,13 +263,8 @@ async def _estimate(
     chunks: list[str],
     remaining: list[int],
     settings: Settings,
-    backend: Backend,
 ) -> AsyncIterator[Event]:
-    """Прогноз времени (и стоимости для API) для оставшихся фрагментов.
-
-    Локально — по замеру скорости модели (раз за сеанс), для API — по тарифам и
-    типичной скорости; в обоих случаях ETA потом уточняется по факту.
-    """
+    """Прогноз времени и стоимости для оставшихся фрагментов (потом уточняется по факту)."""
     max_items = max_items_for(run, settings.max_items)
     first = remaining[0]
     messages, schema = generation_request(
@@ -299,44 +276,18 @@ async def _estimate(
         total=len(chunks),
         max_items=max_items,
     )
-    left = [chunks[index] for index in remaining]
-    output_chars = expected_output_chars(run, max_items)
-
-    if isinstance(backend, OllamaBackend):
-        # Замер — это запрос первого оставшегося фрагмента: тот же промпт и та же схема.
-        fresh = not speed_cached(settings)
-        if fresh:
-            yield SpeedMeasureStarted(path)
-        speed = await measure_speed(backend.client, settings, messages, schema)
-        if fresh:
-            yield SpeedMeasured(speed, system_info())
-        estimate = estimate_chunks(
-            left,
-            speed,
-            output_chars=output_chars,
-            think=settings.think,
-            system_chars=len(messages[0]["content"]),
-        )
-        yield EstimateReady(path, estimate)
-        return
-
     schema_chars = len(json.dumps(schema.model_json_schema(), separators=(",", ":")))
     estimate, price = estimate_api(
-        left,
-        output_chars=output_chars,
+        [chunks[index] for index in remaining],
+        output_chars=expected_output_chars(run, max_items),
         think=settings.think,
         effort=settings.effort,
         system_chars=len(messages[0]["content"]) + schema_chars,
-        parallel=_parallel(settings),
+        parallel=settings.parallel,
         model=settings.model,
     )
     known = price_for(settings.model) is not None
-    yield EstimateReady(path, estimate, _parallel(settings), price if known else None)
-
-
-def _parallel(settings: Settings) -> int:
-    # Локальная Ollama считает запросы по очереди — параллельность ей не помогает.
-    return 1 if settings.local else max(settings.parallel, 1)
+    yield EstimateReady(path, estimate, settings.parallel, price if known else None)
 
 
 def _cost(usage: Usage | None, settings: Settings) -> float:

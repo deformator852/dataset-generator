@@ -4,7 +4,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Literal
 
-from dataset_generator.estimate import Estimate, Speed, SystemInfo
+from dataset_generator.estimate import Estimate
 from dataset_generator.kinds import Example
 
 
@@ -38,7 +38,7 @@ class KindChosen:
     how: Literal["user", "auto", "resumed", "fallback"]
     genre: str = ""
     reason: str = ""
-    cost: float = 0.0  # стоимость анализа (API), $
+    cost: float = 0.0  # стоимость анализа, $
 
 
 @dataclass(slots=True, frozen=True)
@@ -50,22 +50,11 @@ class FileLoaded:
 
 
 @dataclass(slots=True, frozen=True)
-class SpeedMeasureStarted:
-    path: Path
-
-
-@dataclass(slots=True, frozen=True)
-class SpeedMeasured:
-    speed: Speed
-    system: SystemInfo
-
-
-@dataclass(slots=True, frozen=True)
 class EstimateReady:
     path: Path
     estimate: Estimate
     parallel: int = 1
-    cost: float | None = None  # ожидаемая стоимость оставшихся фрагментов (API), $
+    cost: float | None = None  # ожидаемая стоимость оставшихся фрагментов, $
 
 
 @dataclass(slots=True, frozen=True)
@@ -136,8 +125,6 @@ Event = (
     | AnalysisStarted
     | KindChosen
     | FileLoaded
-    | SpeedMeasureStarted
-    | SpeedMeasured
     | EstimateReady
     | ChunkStarted
     | ThinkingDelta

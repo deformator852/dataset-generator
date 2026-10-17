@@ -1,7 +1,7 @@
 [project]
 name = "dataset-generator"
 version = "0.1.0"
-description = "Генератор обучающих датасетов по криминалистике из PDF/EPUB/FB2/TXT и др. с помощью локальной Qwen3 в Ollama"
+description = "Генератор обучающих датасетов по криминалистике из PDF/EPUB/FB2/TXT и др. с помощью DeepSeek API"
 readme = "README.md"
 authors = [
     { name = "Nikita", email = "kostneko30@gmail.com" }
@@ -10,7 +10,6 @@ requires-python = ">=3.12"
 dependencies = [
     "charset-normalizer>=3.5.2",
     "langdetect>=1.0.9",
-    "ollama>=0.6.3",
     "openai>=3.33.0",
     "pydantic>=2.14.1",
     "pymupdf>=1.28.2",
