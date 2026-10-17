@@ -1,0 +1,39 @@
+[project]
+name = "dataset-generator"
+version = "0.1.0"
+description = "Генератор обучающих датасетов по криминалистике из PDF/EPUB/FB2/TXT и др. с помощью локальной Qwen3 в Ollama"
+readme = "README.md"
+authors = [
+    { name = "Nikita", email = "kostneko30@gmail.com" }
+]
+requires-python = ">=3.12"
+dependencies = [
+    "charset-normalizer>=3.5.2",
+    "langdetect>=1.0.9",
+    "ollama>=0.6.3",
+    "pydantic>=2.14.1",
+    "pymupdf>=1.28.2",
+    "python-docx>=1.2.0",
+    "textual>=8.2.8",
+]
+
+[project.scripts]
+dataset-generator = "dataset_generator:main"
+
+[build-system]
+requires = ["uv_build>=0.12.17,<0.13.0"]
+build-backend = "uv_build"
+
+[dependency-groups]
+dev = [
+    "ruff>=0.17.1",
+]
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "B", "UP", "SIM", "RUF"]
+# Кириллица в строках/комментариях — норма для этого проекта.
+ignore = ["RUF001", "RUF002", "RUF003"]
