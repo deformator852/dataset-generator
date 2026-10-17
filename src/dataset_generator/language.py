@@ -7,29 +7,29 @@ from langdetect import DetectorFactory, LangDetectException, detect
 
 DetectorFactory.seed = 0  # deterministic results across runs
 
-# code → (English name, native name)
+# code → English name of the language
 _NAMES = {
-    "ru": ("Russian", "русский"),
-    "uk": ("Ukrainian", "українська"),
-    "be": ("Belarusian", "беларуская"),
-    "bg": ("Bulgarian", "български"),
-    "mk": ("Macedonian", "македонски"),
-    "en": ("English", "English"),
-    "de": ("German", "Deutsch"),
-    "fr": ("French", "français"),
-    "es": ("Spanish", "español"),
-    "it": ("Italian", "italiano"),
-    "pt": ("Portuguese", "português"),
-    "pl": ("Polish", "polski"),
-    "cs": ("Czech", "čeština"),
-    "sk": ("Slovak", "slovenčina"),
-    "hr": ("Croatian", "hrvatski"),
-    "sl": ("Slovenian", "slovenščina"),
-    "lt": ("Lithuanian", "lietuvių"),
-    "lv": ("Latvian", "latviešu"),
-    "et": ("Estonian", "eesti"),
-    "tr": ("Turkish", "Türkçe"),
-    "zh-cn": ("Chinese", "中文"),
+    "ru": "Russian",
+    "uk": "Ukrainian",
+    "be": "Belarusian",
+    "bg": "Bulgarian",
+    "mk": "Macedonian",
+    "en": "English",
+    "de": "German",
+    "fr": "French",
+    "es": "Spanish",
+    "it": "Italian",
+    "pt": "Portuguese",
+    "pl": "Polish",
+    "cs": "Czech",
+    "sk": "Slovak",
+    "hr": "Croatian",
+    "sl": "Slovenian",
+    "lt": "Lithuanian",
+    "lv": "Latvian",
+    "et": "Estonian",
+    "tr": "Turkish",
+    "zh-cn": "Chinese",
 }
 
 _SAMPLES = 9
@@ -39,19 +39,12 @@ _SAMPLE_CHARS = 1200
 @dataclass(slots=True, frozen=True)
 class Language:
     code: str
-    english: str
-    native: str
-
-    @property
-    def label(self) -> str:
-        """A label like "Russian (русский)", used in the interface and the model prompt."""
-        return self.english if self.english == self.native else f"{self.english} ({self.native})"
+    label: str  # English name, used in the interface and in the model prompt
 
 
 def language_from_code(code: str) -> Language:
     code = code.strip().lower()
-    english, native = _NAMES.get(code, (code, code))
-    return Language(code, english, native)
+    return Language(code, _NAMES.get(code, code))
 
 
 def detect_language(text: str) -> Language:

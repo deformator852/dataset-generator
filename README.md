@@ -113,8 +113,8 @@ the next run.
 
 **Language.** Prompts for the model are written in English. The language of the examples is
 detected automatically from the source text: an English article gives an English dataset, a
-Russian one gives a Russian dataset. The system prompt in the examples is in the source language
-too. To set the language manually: `--language en`.
+Russian one gives a Russian dataset. The system prompt in the examples is always in English
+(`--no-system` leaves it out). To set the language manually: `--language en`.
 
 **Research materials.** Findings of a specific study go into the dataset as findings of that
 study — with its object, sample and method — rather than as established facts. An author's

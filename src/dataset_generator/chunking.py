@@ -84,6 +84,9 @@ def _last_sentences(paragraph: str, limit: int) -> str:
 
 
 # Signs of a bibliographic entry: a year plus publication details or author initials.
+# The Cyrillic parts match Russian-language bibliographies ("С. 45" = p. 45, "М.:" =
+# Moscow, "СПб." = St Petersburg, headings like "Список литературы" = References);
+# they are patterns for the input text, not text to translate.
 _YEAR = re.compile(r"\b(1[89]\d\d|20\d\d)\b")
 _BIBLIO_MARKERS = re.compile(
     r"//|\bС\.\s*\d|\d+\s*с\.|\bpp?\.\s*\d|\bvol\.|\bт\.\s*\d|№\s*\d|doi|https?://|isbn|"

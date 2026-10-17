@@ -3,31 +3,14 @@
 from dataset_generator.kinds import KINDS, DatasetKind
 from dataset_generator.language import Language
 
-# System prompt of the future model that goes into training examples, in the dataset language.
-TRAINING_SYSTEM_PROMPTS = {
-    "ru": (
-        "Ты — ИИ-ассистент по криминалистике и судебной экспертизе. Ты помогаешь следователям, "
-        "экспертам-криминалистам, специалистам и студентам юридических вузов: точно объясняешь "
-        "понятия, методы и средства криминалистической техники, тактику следственных действий "
-        "и методику расследования, опираясь на научные данные и требования закона."
-    ),
-    "uk": (
-        "Ти — ШІ-асистент із криміналістики та судової експертизи. Ти допомагаєш слідчим, "
-        "експертам-криміналістам, фахівцям і студентам юридичних вишів: точно пояснюєш поняття, "
-        "методи й засоби криміналістичної техніки, тактику слідчих дій і методику "
-        "розслідування, спираючись на наукові дані та вимоги закону."
-    ),
-    "en": (
-        "You are an AI assistant for forensic science and criminalistics. You help "
-        "investigators, forensic experts, crime scene specialists and law students: you "
-        "accurately explain concepts, methods and tools of forensic technology, investigative "
-        "tactics and investigation methodology, based on scientific evidence and the law."
-    ),
-}
-
-
-def training_system_prompt(language: Language) -> str:
-    return TRAINING_SYSTEM_PROMPTS.get(language.code, TRAINING_SYSTEM_PROMPTS["en"])
+# System prompt of the future model that goes into every training example. It is in
+# English whatever the dataset language is; --no-system leaves it out.
+TRAINING_SYSTEM_PROMPT = (
+    "You are an AI assistant for forensic science and criminalistics. You help "
+    "investigators, forensic experts, crime scene specialists and law students: you "
+    "accurately explain concepts, methods and tools of forensic technology, investigative "
+    "tactics and investigation methodology, based on scientific evidence and the law."
+)
 
 
 # Prompts for the model are in English: models follow English instructions more precisely,

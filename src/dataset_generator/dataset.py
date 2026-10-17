@@ -10,7 +10,7 @@ from typing import Any
 from dataset_generator.config import Settings
 from dataset_generator.kinds import KINDS, MIXED, DatasetKind, Example
 from dataset_generator.language import Language
-from dataset_generator.prompts import TRAINING_SYSTEM_PROMPTS, training_system_prompt
+from dataset_generator.prompts import TRAINING_SYSTEM_PROMPT
 
 _MIN_USER_CHARS = 10
 _MIN_ASSISTANT_CHARS = 30
@@ -59,7 +59,7 @@ def to_record(
 def sample_record(kind: DatasetKind, dataset_format: str, include_system: bool) -> dict[str, Any]:
     """An example dataset record, shown to the user in the type picker."""
     example = kind.sample
-    system = TRAINING_SYSTEM_PROMPTS["en"].split(":")[0] + "…" if include_system else None
+    system = TRAINING_SYSTEM_PROMPT.split(":")[0] + "…" if include_system else None
     metadata = {
         "source": "trasology.pdf",
         "chunk": 12,
@@ -131,7 +131,7 @@ class DatasetWriter:
         self.dataset_format = dataset_format
         self.language = language
         self.fingerprint = fingerprint
-        self.system = training_system_prompt(language) if settings.include_system else None
+        self.system = TRAINING_SYSTEM_PROMPT if settings.include_system else None
         settings.output_dir.mkdir(parents=True, exist_ok=True)
         prefix = f"{source.name}.{run}"
         if run == MIXED:

@@ -35,5 +35,5 @@ target-version = "py312"
 
 [tool.ruff.lint]
 select = ["E", "F", "W", "I", "B", "UP", "SIM", "RUF"]
-# Cyrillic in data strings (Russian/Ukrainian prompts, bibliography patterns) is intended.
+# Cyrillic in the bibliography patterns for Russian-language sources is intended.
 ignore = ["RUF001", "RUF002", "RUF003"]
