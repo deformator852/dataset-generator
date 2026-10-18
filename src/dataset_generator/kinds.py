@@ -7,6 +7,8 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, Field, create_model
 
+from dataset_generator.quality import Evidence, Support
+
 AUTO = "auto"  # the model picks one type for the whole document
 MIXED = "mixed"  # the model picks types for each fragment → several datasets
 
@@ -20,6 +22,15 @@ class Example:
     subtype: str
     reasoning: str = ""  # reasoning before the last answer (the reasoning type)
     kind: str = ""  # key of the dataset type the example goes to
+    # Quality labels: see quality.py. quote_match is set by the program, not the model.
+    evidence: str = ""
+    support: str = ""
+    quote: str = ""
+    quote_match: str = ""
+
+
+# Every item ends with the quality labels: the model writes the example first, then
+# labels it and copies the passage that supports it.
 
 
 class QAItem(BaseModel):
@@ -27,6 +38,9 @@ class QAItem(BaseModel):
     answer: str
     category: str
     type: Literal["definition", "explanation", "procedure", "comparison", "legal"]
+    evidence: Evidence
+    support: Support
+    quote: str
 
 
 class ResearchItem(BaseModel):
@@ -34,6 +48,9 @@ class ResearchItem(BaseModel):
     answer: str
     category: str
     aspect: Literal["background", "method", "results", "limitations", "application"]
+    evidence: Evidence
+    support: Support
+    quote: str
 
 
 class CaseItem(BaseModel):
@@ -41,12 +58,18 @@ class CaseItem(BaseModel):
     task: str
     solution: str
     category: str
+    evidence: Evidence
+    support: Support
+    quote: str
 
 
 class InstructionItem(BaseModel):
     instruction: str
     response: str
     category: str
+    evidence: Evidence
+    support: Support
+    quote: str
 
 
 class ReasoningItem(BaseModel):
@@ -54,6 +77,9 @@ class ReasoningItem(BaseModel):
     reasoning: str
     answer: str
     category: str
+    evidence: Evidence
+    support: Support
+    quote: str
 
 
 class DialogueTurn(BaseModel):
@@ -64,6 +90,9 @@ class DialogueTurn(BaseModel):
 class DialogueItem(BaseModel):
     category: str
     turns: list[DialogueTurn]
+    evidence: Evidence
+    support: Support
+    quote: str
 
 
 @dataclass(slots=True, frozen=True)
@@ -93,7 +122,13 @@ class DatasetKind:
         object.__setattr__(self, "result_model", result)
 
     def make_example(self, item: BaseModel) -> Example:
-        return replace(self.convert(item), kind=self.key)
+        return replace(
+            self.convert(item),
+            kind=self.key,
+            evidence=item.evidence,  # type: ignore[attr-defined]
+            support=item.support,  # type: ignore[attr-defined]
+            quote=item.quote.strip(),  # type: ignore[attr-defined]
+        )
 
 
 KINDS: dict[str, DatasetKind] = {
@@ -137,6 +172,12 @@ An answer is usually 3–8 sentences; for procedures, a numbered list of steps."
                 ),
                 "footwear impressions",
                 "definition",
+                evidence="established",
+                support="stated",
+                quote=(
+                    "Footwear impressions are among the most common traces at crime scenes and can "
+                    "link a shoe to the scene through class and individual characteristics."
+                ),
             ),
         ),
         DatasetKind(
@@ -181,6 +222,12 @@ impressions in snow"), not "this study". An answer is 3–6 sentences.""",
                 ),
                 "footwear impressions",
                 "limitations",
+                evidence="empirical",
+                support="stated",
+                quote=(
+                    "Accuracy on crime scene marks was lower than on laboratory impressions, so "
+                    "every automated match was verified by an examiner."
+                ),
             ),
         ),
         DatasetKind(
@@ -231,6 +278,12 @@ actions with justification, typical mistakes.""",
                 ),
                 "crime scene examination",
                 "case",
+                evidence="established",
+                support="constructed",
+                quote=(
+                    "Three-dimensional impressions are photographed with a scale before casting "
+                    "with dental stone."
+                ),
             ),
         ),
         DatasetKind(
@@ -273,6 +326,11 @@ for…", "List the features of…", "Draw up a crime scene examination plan for�
                 ),
                 "fingerprints",
                 "instruction",
+                evidence="normative",
+                support="inferred",
+                quote=(
+                    "The order commissioning the examination lists the questions put to the expert."
+                ),
             ),
         ),
         DatasetKind(
@@ -317,6 +375,12 @@ fragment to the conclusion.
                 "instability.\n"
                 "3. This combination is typical of carrying a load, intoxication or fatigue.\n"
                 "4. The hypotheses can be distinguished by impression depth and drag marks.",
+                evidence="expert_opinion",
+                support="inferred",
+                quote=(
+                    "Shortened steps and a wider foot angle are typical of a person carrying a "
+                    "load."
+                ),
             ),
         ),
         DatasetKind(
@@ -359,6 +423,9 @@ strictly based on the fragment.""",
                 ),
                 "footwear impressions",
                 "dialogue",
+                evidence="established",
+                support="stated",
+                quote="Impressions in snow are sprayed with snow wax before casting.",
             ),
         ),
     )
@@ -379,6 +446,8 @@ MIXED_SUMMARY = (
     "(definitions → question–answer, procedures → instructions, casework → case problems…) "
     "and sorts the examples into separate files, one per type."
 )
+_LABEL_CHARS = 250  # evidence, support and the quote of one example
+
 MIXED_DEFAULT_ITEMS = 3
 MIXED_MAX_KINDS = 2
 # The selected field comes first: the model picks the types, then writes examples. The schema
@@ -428,5 +497,6 @@ def expected_output_chars(run: str, max_items: int) -> int:
         item_chars = KINDS[run].item_chars
     else:
         item_chars = sum(kind.item_chars for kind in KINDS.values()) // len(KINDS)
-    # The model does not always produce the maximum number of examples; about 80% on average.
-    return int(item_chars * max_items * 0.8)
+    # Plus the quality labels and the quote; the model does not always produce the maximum
+    # number of examples, about 80% on average.
+    return int((item_chars + _LABEL_CHARS) * max_items * 0.8)

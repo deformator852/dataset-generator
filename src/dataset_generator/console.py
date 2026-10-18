@@ -23,6 +23,7 @@ from dataset_generator.events import (
     FileLoaded,
     FileStarted,
     KindChosen,
+    SourceAnalysed,
     TextExtracted,
     ThinkingDelta,
 )
@@ -131,11 +132,21 @@ async def run_console(settings: Settings, files: list[Path]) -> int:
                     )
                 case AnalysisStarted():
                     answering = False
-                    line("\n🔎 Analysing the source to pick a dataset type", "bold")
+                    line("\n🔎 Analysing the source for the source card", "bold")
                     if live:
                         console.print("🧠 ", end="")
-                case KindChosen():
+                case SourceAnalysed():
                     spent += event.cost
+                    if event.how == "failed":
+                        line(f"\n! Source analysis failed: {event.reason}", "yellow")
+                    else:
+                        line(
+                            f"\n📇 Source card: {event.title or path.name} — {event.genre or '?'}; "
+                            f"evidence: {', '.join(event.evidence) or '?'}; "
+                            f"suitability: {event.suitability or '?'} → {event.card}",
+                            "bold",
+                        )
+                case KindChosen():
                     details = f" (source: {event.genre}). {event.reason}" if event.genre else ""
                     if event.how == "fallback":
                         details = f" — analysis failed: {event.reason}"
@@ -199,7 +210,14 @@ async def run_console(settings: Settings, files: list[Path]) -> int:
                     parts = [f"{run_title(k)}: {n}" for k, n in event.records.items() if n]
                     by_kind = f" ({', '.join(parts)})" if len(event.records) > 1 and parts else ""
                     money = f", cost {format_cost(event.cost)}" if priced else ""
-                    line(f"✔ {total} examples{by_kind}{money} → {event.output}", "bold green")
+                    quotes = (
+                        f", quotes found in the source: {event.quotes_verified:.0%}"
+                        if event.quotes_verified is not None
+                        else ""
+                    )
+                    line(
+                        f"✔ {total} examples{by_kind}{money}{quotes} → {event.output}", "bold green"
+                    )
                 case FileFailed():
                     line(f"✗ {event.path.name}: {event.reason}", "bold red")
                     exit_code = 1

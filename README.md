@@ -14,6 +14,9 @@ Features:
 - several dataset types to choose from, or the model picks the type itself;
 - a separate dataset type for analysing research studies;
 - the dataset language follows the language of the source;
+- a source card for every file (genre, methods, sample, findings, limitations, suitability)
+  and quality labels on every example: what its knowledge rests on, and whether its supporting
+  quote really is in the source;
 - reference lists and running heads (journal name, DOI, page numbers) are removed
   automatically, so the model spends no time or money on them;
 - parallel API requests, time and cost estimates, and spending tracking;
@@ -108,7 +111,9 @@ like.
 | 🧠 Reasoning (CoT) | `reasoning` | a question → step-by-step reasoning in `<think>…</think>` → a conclusion | monographs, expert reports, analytical papers |
 | 💬 Dialogues | `dialogue` | a conversation of 2–4 exchanges with follow-up questions | review texts, study guides |
 
-The choice made by "Auto — per document" is remembered: the document is not analysed again on
+Before the fragments, the model reads the beginning, middle and end of every document (the whole
+text of a short one) and fills in its [source card](#source-card). "Auto — per document" takes
+the dataset type the card recommends. The card is reused: the document is not analysed again on
 the next run.
 
 **Language.** Prompts for the model are written in English. The language of the examples is
@@ -141,8 +146,9 @@ All files are written to `datasets/` in JSON Lines format (one line is one examp
 | a specific type or "Auto — per document" | `<file>.<type>.jsonl`, e.g. `article.pdf.research.jsonl` |
 | "Auto — per fragment" | `<file>.mixed.<type>.jsonl` — one file per type the model picked |
 
-Next to them is `*.state.json`, a service file used for resuming. With parallel processing,
-examples are written in the order fragments finish; the fragment index is in `metadata.chunk`.
+Next to them are `<file>.source.json`, the [source card](#source-card), and `*.state.json`, a
+service file used for resuming. With parallel processing, examples are written in the order
+fragments finish; the fragment index is in `metadata.chunk`.
 
 The record format is chosen in the picker or with `--format`. A `chatml` example (the default):
 
@@ -152,8 +158,11 @@ The record format is chosen in the picker or with `--format`. A `chatml` example
   {"role": "user", "content": "How are three-dimensional footwear impressions in snow recovered?"},
   {"role": "assistant", "content": "1. Photograph the impression with a scale…"}
  ],
- "metadata": {"source": "snow.pdf", "chunk": 3, "kind": "qa", "category": "footwear impressions",
-              "type": "procedure", "language": "en", "model": "deepseek-flash"}}
+ "metadata": {"source": "snow.pdf", "source_id": "3f9a1c0d2b7e4a65", "chunk": 3, "kind": "qa",
+              "category": "footwear impressions", "type": "procedure",
+              "evidence": "empirical", "support": "stated",
+              "quote": "Impressions in fresh snow were cast after spraying with snow wax…",
+              "quote_match": "exact", "language": "en", "model": "deepseek-flash"}}
 ```
 
 - `alpaca` — `instruction`, `input`, `output`, `system`, plus `history` for dialogues;
@@ -172,11 +181,59 @@ from datasets import load_dataset
 ds = load_dataset("json", data_files="forensics.jsonl", split="train")
 ```
 
+### Quality labels
+
+Only `messages` is trained on. `metadata` says where each example comes from and how far it can
+be trusted, so the dataset can be filtered and balanced:
+
+| Field | Values |
+|---|---|
+| `evidence` | what the knowledge rests on: `empirical` (results of a specific study), `review` (a synthesis of studies), `case` (one case from casework), `theory` (a hypothesis, model or typology not presented as tested), `expert_opinion` (the author's position or experience without data), `established` (definitions, textbook knowledge), `normative` (law, standards, official procedures) |
+| `support` | how the example relates to the fragment: `stated` (everything is in the text), `inferred` (the model combined or generalised what the text says), `constructed` (a hypothetical scenario that applies the material, as in case problems) |
+| `quote` | the passage of the fragment that supports the example, copied by the model |
+| `quote_match` | the program's check of that passage against the fragment: `exact`, `partial` (lightly edited) or `none` (not in the source: the example may be ungrounded) |
+
+The model sets `evidence` and `support`, so they are its judgement; `quote_match` is computed by
+the program and does not depend on the model. Unknown label values are stored as `""`.
+`model` only says who wrote the example, not that it is correct.
+
+The [fine-tuning notebook](#fine-tuning) skips examples with `quote_match: none` by default. To
+pick examples yourself, for instance only empirical findings with a found quote:
+
+```bash
+jq -c 'select(.metadata.evidence == "empirical" and .metadata.quote_match != "none")' \
+  datasets/*.jsonl > forensics-empirical.jsonl
+```
+
+### Source card
+
+`<file>.source.json` describes the whole source; examples link to it by `source_id`. The model
+fills in the description once per file:
+
+- `title`, `authors`, `year`, `genre` (`research_article`, `review`, `meta_analysis`, `thesis`,
+  `monograph`, `textbook`, `guideline`, `report`, `expert_report`, `case_report`, `legal_text`,
+  `other`) and `topic`;
+- `evidence_basis` — what the content rests on, with the same values as `evidence` above;
+- `objectives`, `methods`, `sample` (data, participants, cases and their size), `setting`
+  (jurisdiction and period);
+- `key_findings` and `limitations` (stated by the authors and evident ones: small sample, no
+  control group, outdated data);
+- `applications` — forensic tasks the source supports (offender profiling, crime scene
+  assessment…);
+- `suitability` (`high` / `medium` / `low`) and `suitability_reason` — how reliable and useful
+  the source is as training material;
+- `recommended_kind` and `kind_reason` — the dataset type that suits it best.
+
+`analysis.based_on` says what the description rests on: the whole text or fragments of it. The
+program adds `datasets`: for every dataset made from the file, the number of examples, the counts
+of each `evidence`, `support` and `quote_match` value, and the top categories. It is updated at
+the end of every run.
+
 **Resuming.** If processing was interrupted (F3, Ctrl+Q, Ctrl+C, the PC shut down, the balance
 ran out), add the same file with the same type again — processing continues where it stopped,
-and fragments that are already paid for are not sent again. If the file itself or the chunking,
-format or language settings changed, the old dataset is not deleted but renamed to
-`*.jsonl.bak-<date>`.
+and fragments that are already paid for are not sent again. If the file itself, the chunking,
+format or language settings, or the record layout of a newer program version changed, the old
+dataset is not deleted but renamed to `*.jsonl.bak-<date>`.
 
 ## Command line
 
@@ -243,13 +300,51 @@ lists (the TUI log shows how many entries were removed).
 - fine-tuning a model needs several thousand examples — process several sources and combine the
   datasets.
 
+## Statistical data (NIBRS)
+
+Data files (SPSS, Stata, SAS, R, delimited) are tables of codes, not text, so the generator does
+not read them. For the [NIBRS extract files](https://www.icpsr.umich.edu/web/ICPSR/studies/39270)
+from ICPSR there is a converter: it computes the statistics with pandas and writes a text report
+that the generator then processes like an article. The model only phrases the examples, so it
+cannot get a figure wrong, and the quotes are checked against the report.
+
+Download the collection in **Stata** (or SPSS) format — they store the labels of variables and
+codes — and pass the downloaded archive as it is:
+
+```bash
+uv run nibrs-report ~/Downloads/ICPSR_39270-V2.zip --inspect   # which variables were found
+uv run nibrs-report ~/Downloads/ICPSR_39270-V2.zip             # → input/nibrs-2023.txt
+uv run dataset-generator input/nibrs-2023.txt -k mixed
+```
+
+Only the victim-level file is unpacked (found by the archive's manifest, also when it is a
+`.gz` inside the archive), next to the archive, and it is deleted when the report is ready. An
+unpacked download folder works too.
+
+The report uses the victim-level file (DS4, about 14 million records; a run takes a few
+minutes). It covers individual victims of homicide, negligent manslaughter, rape and other
+sexual offenses, aggravated assault, robbery, kidnapping and human trafficking: the victim's sex
+and age; the relationship to the offender, also by the victim's sex and, for sexual offenses and
+kidnapping, by age; circumstances; injuries; weapons (and the share of firearms), location and
+completion, taken from the incident's record of that very offense; suspected alcohol or drug
+use; time of day; the number of offenders and the offender's sex and age; and clearance by
+arrest or exceptionally. Every paragraph names the data and states the share of unknown values;
+the report begins with the definitions, the method and the limitations of NIBRS. Race and
+ethnicity are left out on purpose, so that the model does not learn to profile by race.
+The victim-level file is recognised by its variables (it is DS2 in the 1991–2016 extract files
+and DS4 since 2017), and variables by their labels, so `--inspect` shows what each one was taken
+for. The year in the text is taken from the data; `--name "NIBRS 2015"` sets it by hand.
+
+The documentation PDFs of the collection (codebook, user guide) go to the generator as they are.
+
 ## Fine-tuning
 
 [`notebooks/finetune_colab.ipynb`](notebooks/finetune_colab.ipynb) fine-tunes Qwen3-8B on the
 datasets with QLoRA (Unsloth) on a free Google Colab T4. In Colab: *File → Upload notebook*,
 select the T4 GPU, put the `*.jsonl` files into `MyDrive/forensics-llm/data/` and run all cells.
 Checkpoints, the trained LoRA adapter and an optional GGUF export for Ollama are saved to Google
-Drive; to continue training later, set `CONTINUE_FROM` to the previous run's name.
+Drive; to continue training later, set `CONTINUE_FROM` to the previous run's name. Examples
+whose supporting quote was not found in the source are skipped (`DROP_UNVERIFIED`).
 
 ## Project layout
 
@@ -261,6 +356,9 @@ src/dataset_generator/
 ├── pipeline.py     pipeline: file → language and type → fragments (in parallel) → model → dataset
 ├── backends.py     DeepSeek API: streaming requests, JSON checks, errors
 ├── llm.py          example generation and source analysis on top of the backend
+├── quality.py      quality labels and the check of supporting quotes against the source
+├── nibrs.py        NIBRS data files → a text report of crime statistics
+├── source_card.py  source cards: description of the source, statistics of its datasets
 ├── kinds.py        dataset types: response schemas, prompt tasks, examples
 ├── prompts.py      forensic expert prompts
 ├── pricing.py      DeepSeek pricing, peak hours, cost calculation

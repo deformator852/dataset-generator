@@ -24,11 +24,27 @@ from dataset_generator.prompts import (
     build_generation_messages,
     build_mixed_messages,
 )
+from dataset_generator.quality import Evidence, Genre, Rating
 
 
 class SourceAnalysis(BaseModel):
-    genre: str
+    """The model's part of the source card (see source_card.py) and the type for Auto."""
+
+    title: str
+    authors: list[str]
+    year: str
+    genre: Genre
     topic: str
+    evidence_basis: list[Evidence]
+    objectives: list[str]
+    methods: list[str]
+    sample: str
+    setting: str
+    key_findings: list[str]
+    limitations: list[str]
+    applications: list[str]
+    suitability: Rating
+    suitability_reason: str
     kind: Literal[tuple(KINDS)]  # type: ignore[valid-type]
     reason: str
 
@@ -94,8 +110,8 @@ async def generate_examples(
 
 
 async def analyze_source(
-    backend: Backend, *, source: str, samples: list[str], think: bool
+    backend: Backend, *, source: str, samples: list[str], whole: bool, think: bool
 ) -> AsyncIterator[ThinkingDelta | ContentDelta | Structured]:
-    messages = build_analysis_messages(source, samples)
+    messages = build_analysis_messages(source, samples, whole)
     async for event in backend.stream(messages, SourceAnalysis, think=think):
         yield event

@@ -29,16 +29,31 @@ class AnalysisStarted:
 
 
 @dataclass(slots=True, frozen=True)
+class SourceAnalysed:
+    path: Path
+    card: Path  # the source card file
+    # new: the model filled in the card; reused: the card of a previous run of this file;
+    # failed: the analysis failed, the card has no description
+    how: Literal["new", "reused", "failed"]
+    title: str = ""
+    genre: str = ""
+    evidence: tuple[str, ...] = ()  # what the source's content rests on
+    suitability: str = ""
+    kind: str = ""  # the dataset type the model recommends
+    reason: str = ""  # why that type, or the error if the analysis failed
+    cost: float = 0.0  # cost of the analysis, $
+
+
+@dataclass(slots=True, frozen=True)
 class KindChosen:
     path: Path
     kind: str
     title: str
-    # user: chosen by the user; auto: picked by the model; resumed: taken from a previous
-    # auto analysis of this file; fallback: the analysis failed, the default type is used
+    # user: chosen by the user; auto: picked by the model; resumed: taken from the source
+    # card of a previous run; fallback: the analysis failed, the default type is used
     how: Literal["user", "auto", "resumed", "fallback"]
     genre: str = ""
     reason: str = ""
-    cost: float = 0.0  # cost of the analysis, $
 
 
 @dataclass(slots=True, frozen=True)
@@ -111,6 +126,8 @@ class FileFinished:
     records: dict[str, int]  # dataset type → number of examples
     failed_chunks: int
     cost: float = 0.0  # $ for this run
+    card: Path | None = None
+    quotes_verified: float | None = None  # share of examples whose quote was found
 
 
 @dataclass(slots=True, frozen=True)
@@ -123,6 +140,7 @@ Event = (
     FileStarted
     | TextExtracted
     | AnalysisStarted
+    | SourceAnalysed
     | KindChosen
     | FileLoaded
     | EstimateReady

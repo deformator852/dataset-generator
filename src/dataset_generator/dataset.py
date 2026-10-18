@@ -3,14 +3,20 @@
 import hashlib
 import json
 import re
+from dataclasses import replace
 from datetime import datetime
 from pathlib import Path
 from typing import Any
 
-from dataset_generator.config import Settings
+from dataset_generator.config import DEFAULT_MODEL, Settings
 from dataset_generator.kinds import KINDS, MIXED, DatasetKind, Example
 from dataset_generator.language import Language
 from dataset_generator.prompts import TRAINING_SYSTEM_PROMPT
+from dataset_generator.source_card import source_id
+
+# Bumped when the record layout changes, so a rerun does not mix old and new records in
+# one file. 2: quality labels (evidence, support, quote) and source_id.
+RECORD_VERSION = 2
 
 _MIN_USER_CHARS = 10
 _MIN_ASSISTANT_CHARS = 30
@@ -58,17 +64,11 @@ def to_record(
 
 def sample_record(kind: DatasetKind, dataset_format: str, include_system: bool) -> dict[str, Any]:
     """An example dataset record, shown to the user in the type picker."""
-    example = kind.sample
+    example = replace(kind.sample, kind=kind.key)
     system = TRAINING_SYSTEM_PROMPT.split(":")[0] + "…" if include_system else None
-    metadata = {
-        "source": "trasology.pdf",
-        "chunk": 12,
-        "kind": kind.key,
-        "category": example.category,
-        "type": example.subtype,
-        "language": "en",
-        "model": "qwen3:30b-a3b-instruct-2507-q4_K_M",
-    }
+    metadata = _metadata(
+        example, source="trasology.pdf", source_id="3f9a1c0d2b7e4a65", chunk=12, language="en"
+    ) | {"model": DEFAULT_MODEL, "quote_match": "exact"}
     return to_record(example, dataset_format=dataset_format, system=system, metadata=metadata)
 
 
@@ -84,6 +84,7 @@ def base_fingerprint(
     sha256: str, settings: Settings, dataset_format: str, language: Language
 ) -> dict[str, Any]:
     return {
+        "version": RECORD_VERSION,
         "sha256": sha256,
         "chunk_size": settings.chunk_size,
         "chunk_overlap": settings.chunk_overlap,
@@ -91,17 +92,6 @@ def base_fingerprint(
         "include_system": settings.include_system,
         "language": language.code,
     }
-
-
-def find_auto_kind(source: Path, settings: Settings, fingerprint: dict[str, Any]) -> str | None:
-    """The type auto analysis already picked for this file in a previous run."""
-    candidates = []
-    for key in KINDS:
-        state_path = settings.output_dir / f"{source.name}.{key}.state.json"
-        state = _read_state(state_path)
-        if state and state.get("auto") and state.get("fingerprint") == fingerprint:
-            candidates.append((state_path.stat().st_mtime, key))
-    return max(candidates)[1] if candidates else None
 
 
 class DatasetWriter:
@@ -132,6 +122,7 @@ class DatasetWriter:
         self.language = language
         self.fingerprint = fingerprint
         self.system = TRAINING_SYSTEM_PROMPT if settings.include_system else None
+        self.source_id = source_id(fingerprint["sha256"])
         settings.output_dir.mkdir(parents=True, exist_ok=True)
         prefix = f"{source.name}.{run}"
         if run == MIXED:
@@ -174,15 +165,13 @@ class DatasetWriter:
             if key in self.seen:
                 continue
             self.seen.add(key)
-            metadata = {
-                "source": self.source.name,
-                "chunk": chunk_index,
-                "kind": example.kind,
-                "category": example.category.strip(),
-                "type": example.subtype,
-                "language": self.language.code,
-                "model": self.settings.model,
-            }
+            metadata = _metadata(
+                example,
+                source=self.source.name,
+                source_id=self.source_id,
+                chunk=chunk_index,
+                language=self.language.code,
+            ) | {"model": self.settings.model}
             record = to_record(
                 example, dataset_format=self.dataset_format, system=self.system, metadata=metadata
             )
@@ -208,6 +197,26 @@ class DatasetWriter:
         tmp = self.state_path.with_suffix(".tmp")
         tmp.write_text(json.dumps(state, ensure_ascii=False, indent=1), encoding="utf-8")
         tmp.replace(self.state_path)
+
+
+def _metadata(
+    example: Example, *, source: str, source_id: str, chunk: int, language: str
+) -> dict[str, Any]:
+    return {
+        "source": source,
+        "source_id": source_id,
+        "chunk": chunk,
+        "kind": example.kind,
+        "category": example.category.strip(),
+        "type": example.subtype,
+        # Quality labels: what the example rests on, how it relates to the fragment, the
+        # supporting passage and whether the program found that passage in the fragment.
+        "evidence": example.evidence,
+        "support": example.support,
+        "quote": example.quote,
+        "quote_match": example.quote_match,
+        "language": language,
+    }
 
 
 def _is_valid(example: Example) -> bool:

@@ -2,6 +2,7 @@
 
 from dataset_generator.kinds import KINDS, DatasetKind
 from dataset_generator.language import Language
+from dataset_generator.quality import EVIDENCE, GENRES, SUPPORT
 
 # System prompt of the future model that goes into every training example. It is in
 # English whatever the dataset language is; --no-system leaves it out.
@@ -71,14 +72,36 @@ examine evidence.
 list, abstract without facts, keywords, author information, imprint, acknowledgements, \
 advertising, meaningless scraps), return empty arrays.
 9. LANGUAGE: write all example text, including category, in the language of the source — \
-{language}. Do not translate it into other languages. Keep the service values of the type \
-and aspect fields exactly as listed.
+{language}. Do not translate it into other languages. Keep the service values of the type, \
+aspect, evidence and support fields exactly as listed.
+
+QUALITY LABELS
+Every example ends with three fields that let the dataset be filtered by the strength of \
+its evidence:
+- evidence — the nature of the knowledge in the example, as the fragment presents it:
+{evidence}
+- support — how the example relates to the fragment:
+{support}
+- quote — the passage of the fragment that best supports the example: one or two \
+sentences (at most 300 characters) copied verbatim in the original language of the \
+fragment, without changes, omissions or ellipses. It is checked against the fragment \
+automatically.
+Label honestly: an example built on an untested typology or the author's interpretation is \
+theory or expert_opinion, not empirical; an answer that goes beyond what the fragment says \
+is inferred, not stated.
 
 {task}
 
 OUTPUT FORMAT
 {output_format}\
 """
+
+
+def _labels(values: dict[str, str]) -> str:
+    return "\n".join(f"  {key} — {text}" for key, text in values.items())
+
+
+_QUALITY = {"evidence": _labels(EVIDENCE), "support": _labels(SUPPORT)}
 
 _USER_PROMPT = """\
 Source: {source}
@@ -103,20 +126,46 @@ EXAMPLE TYPES
 """
 
 _ANALYSIS_SYSTEM_PROMPT = """\
-You are a forensic science expert and instructional designer preparing training datasets \
-for an AI assistant for forensic science and criminalistics. You are shown several \
-fragments of one source (from its beginning, middle and end; for a short document — the \
-whole text). The source can be anything: a research article, a study, a dissertation, a \
-report, an expert report, a casework review, a guideline, a textbook. Determine what kind \
-of source it is and choose the dataset type that will yield the highest-quality and most \
-useful training examples from it.
+You are a forensic science expert and research methodologist preparing training datasets \
+for an AI assistant for forensic science and criminalistics. You are shown one source: the \
+whole text of a short document, or fragments from the beginning, middle and end of a long \
+one. The source can be anything: a research article, a study, a dissertation, a report, an \
+expert report, a casework review, a guideline, a textbook, a monograph.
+
+Fill in a source card that tells what the source is, what its content rests on and how far \
+it can be trusted, and choose the dataset type that will yield the most useful training \
+examples from it.
+
+CARD FIELDS
+- title, authors, year — as given in the source; empty if the fragments do not show them. \
+year is text, e.g. "1988".
+- genre — one of:
+{genres}
+- topic — the main topic, one sentence.
+- evidence_basis — what the content rests on, one or more of:
+{evidence}
+- objectives — what was studied, or which questions the source addresses.
+- methods — research methods, data collection and analysis; empty for non-research sources.
+- sample — the data, participants, cases or material studied, with sizes and years if \
+given; empty if there is none.
+- setting — the country or jurisdiction and the period the material refers to; empty if \
+not stated.
+- key_findings — the main findings or conclusions, 3–7 items of one sentence each.
+- limitations — limitations stated by the authors and evident ones: a small or \
+unrepresentative sample, no control group, self-reports, outdated data or law, a single \
+jurisdiction.
+- applications — practical forensic tasks the source supports, e.g. "offender profiling", \
+"crime scene assessment", "interviewing suspects".
+- suitability — high, medium or low: how reliable and useful the source is as training \
+material for a forensic AI assistant, given the strength of its evidence, its currency and \
+its relevance to practice; suitability_reason — 1–2 sentences.
+Rely only on the fragments: leave a field empty rather than guess. Write in English, except \
+title and authors, which stay as in the source.
 
 DATASET TYPES
 {kinds}
+kind — the chosen type; reason — a justification in 1–2 sentences.
 
-Response fields: genre — the genre of the source (research article, dissertation, study \
-report, expert report, casework review, guideline, textbook, monograph, etc.); topic — the \
-main topic, briefly; kind — the chosen type; reason — a justification in 1–2 sentences. \
 Respond with a JSON object only.\
 """
 
@@ -132,11 +181,12 @@ def build_generation_messages(
     max_items: int,
 ) -> list[dict[str, str]]:
     system = _GENERATION_SYSTEM_PROMPT.format(
+        **_QUALITY,
         language=language.label,
         task=f"TASK\n{kind.task}",
         output_format=(
             "A JSON object only, no explanations: the items field is an array of objects with "
-            f"the fields {kind.fields}."
+            f"the fields {kind.fields}, evidence, support, quote."
         ),
     )
     user = _USER_PROMPT.format(
@@ -161,12 +211,14 @@ def build_mixed_messages(
     )
     fields = "; ".join(f"{kind.key} — {kind.fields}" for kind in KINDS.values())
     system = _GENERATION_SYSTEM_PROMPT.format(
+        **_QUALITY,
         language=language.label,
         task=_MIXED_TASK.format(kinds=kinds),
         output_format=(
             "A JSON object only, no explanations: selected — an array of the keys of the "
             f"selected types (at most two); {', '.join(KINDS)} — arrays of examples of the "
-            f"corresponding type. Example fields: {fields}."
+            f"corresponding type. Example fields: {fields}. Every example also has the fields "
+            "evidence, support and quote."
         ),
     )
     user = _USER_PROMPT.format(
@@ -180,16 +232,17 @@ def build_mixed_messages(
     return [{"role": "system", "content": system}, {"role": "user", "content": user}]
 
 
-def build_analysis_messages(source: str, samples: list[str]) -> list[dict[str, str]]:
+def build_analysis_messages(source: str, samples: list[str], whole: bool) -> list[dict[str, str]]:
     kinds = "\n".join(
         f"- {kind.key} — {kind.title}: {kind.summary}. Best for: {kind.suits}."
         for kind in KINDS.values()
     )
+    system = _ANALYSIS_SYSTEM_PROMPT.format(
+        genres=_labels(GENRES), evidence=_labels(EVIDENCE), kinds=kinds
+    )
+    coverage = "the whole text" if whole else "fragments from the beginning, middle and end"
     fragments = "\n\n".join(f"[Fragment {i}]\n{text}" for i, text in enumerate(samples, 1))
     return [
-        {"role": "system", "content": _ANALYSIS_SYSTEM_PROMPT.format(kinds=kinds)},
-        {
-            "role": "user",
-            "content": f"Source: {source}\n\n{fragments}",
-        },
+        {"role": "system", "content": system},
+        {"role": "user", "content": f"Source: {source} ({coverage})\n\n{fragments}"},
     ]

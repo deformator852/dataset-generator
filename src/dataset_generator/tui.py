@@ -31,6 +31,7 @@ from dataset_generator.events import (
     FileLoaded,
     FileStarted,
     KindChosen,
+    SourceAnalysed,
     TextExtracted,
     ThinkingDelta,
 )
@@ -39,6 +40,9 @@ from dataset_generator.kind_picker import KindPicker, describe_example
 from dataset_generator.kinds import MIXED, run_title
 from dataset_generator.pipeline import Job, process_file, resolve_input
 from dataset_generator.pricing import format_cost, is_peak, price_for
+
+# How the example's supporting quote matched the source fragment.
+_QUOTE_MARKS = {"exact": "quote ✓", "partial": "quote ≈", "none": "quote ✗ not in source"}
 
 
 class StreamView(VerticalScroll):
@@ -350,13 +354,32 @@ class DatasetApp(App[None]):
                 self.chunk_started_at = time.monotonic()
                 thinking.reset()
                 answer.reset()
-                thinking.border_subtitle = "source analysis — choosing the dataset type"
-                self.log_line(
-                    "  🔎 The model is studying the document to choose a dataset type…", "dim"
-                )
-            case KindChosen():
+                thinking.border_subtitle = "source analysis — the source card"
+                self.log_line("  🔎 The model is studying the document for the source card…", "dim")
+            case SourceAnalysed():
                 self.watch = None
                 self.spent += event.cost
+                self.chunk_started_at = None
+                if event.how == "failed":
+                    self.log_line(
+                        f"! Source analysis failed ({event.reason}) — the card has no "
+                        "description; it will be retried next time",
+                        "yellow",
+                    )
+                else:
+                    label = "Source card" if event.how == "new" else "Source card (previous run)"
+                    self.log_line(
+                        Text.assemble(
+                            (f"  📇 {label}: ", "bold"),
+                            (event.title or event.path.name, "bold"),
+                            f" — {event.genre or '?'}; evidence: "
+                            f"{', '.join(event.evidence) or '?'}; "
+                            f"suitability: {event.suitability or '?'} → ",
+                            (str(event.card), "dim"),
+                        )
+                    )
+            case KindChosen():
+                self.watch = None
                 self.chunk_started_at = None
                 self.current_details = f"{event.title} · {self.current_details}"
                 self.refresh_sidebar()
@@ -446,11 +469,18 @@ class DatasetApp(App[None]):
                     by_kind = f" ({', '.join(parts)})" if parts else ""
                 priced = price_for(self.settings.model) is not None
                 spent = f", cost {format_cost(event.cost)}" if priced else ""
+                quotes = (
+                    f", quotes found in the source: {event.quotes_verified:.0%}"
+                    if event.quotes_verified is not None
+                    else ""
+                )
                 self.log_line(
-                    f"✔ {event.path.name}: {total} examples in total{by_kind}{failed}{spent} → "
-                    f"{event.output}",
+                    f"✔ {event.path.name}: {total} examples in total{by_kind}{failed}{spent}"
+                    f"{quotes} → {event.output}",
                     "bold green",
                 )
+                if event.card:
+                    self.log_line(f"  📇 Source card → {event.card}", "dim")
             case FileFailed():
                 self.log_line(f"✗ {event.path.name}: {event.reason}", "bold red")
         if not isinstance(event, ThinkingDelta | ContentDelta):
@@ -485,7 +515,18 @@ class DatasetApp(App[None]):
         )
         for example in event.examples:
             self.log_line(describe_example(example))
-            self.log_line(f"   [{example.category} · {example.subtype}]", "dim")
+            labels = " · ".join(
+                label
+                for label in (
+                    example.category,
+                    example.subtype,
+                    example.evidence,
+                    example.support,
+                    _QUOTE_MARKS.get(example.quote_match, ""),
+                )
+                if label
+            )
+            self.log_line(f"   [{labels}]", "dim")
 
     # --- sidebar --------------------------------------------------------------
 
