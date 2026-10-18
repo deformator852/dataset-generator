@@ -243,6 +243,14 @@ lists (the TUI log shows how many entries were removed).
 - fine-tuning a model needs several thousand examples — process several sources and combine the
   datasets.
 
+## Fine-tuning
+
+[`notebooks/finetune_colab.ipynb`](notebooks/finetune_colab.ipynb) fine-tunes Qwen3-8B on the
+datasets with QLoRA (Unsloth) on a free Google Colab T4. In Colab: *File → Upload notebook*,
+select the T4 GPU, put the `*.jsonl` files into `MyDrive/forensics-llm/data/` and run all cells.
+Checkpoints, the trained LoRA adapter and an optional GGUF export for Ollama are saved to Google
+Drive; to continue training later, set `CONTINUE_FROM` to the previous run's name.
+
 ## Project layout
 
 ```
