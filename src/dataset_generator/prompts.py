@@ -54,8 +54,9 @@ methods or legal provisions that are not in the text.
 to the source itself: no "in the text", "in this fragment", "in this article", "the author \
 believes", "in this chapter", "as mentioned above".
 3. Present the findings of a specific study, experiment or survey as findings of that \
-study, not as established fact: state the object, sample, method and conditions if the \
-fragment gives them ("Experiments on 120 footwear impressions showed…"). Present an \
+study, not as established fact: state the object, sample, method and conditions, and the \
+country and period the data come from, if the fragment gives them ("Experiments on 120 \
+footwear impressions showed…", "In US police data for 2021–2024…"). Present an \
 author's or debatable position as one viewpoint. Do not carry over citation markers such as \
 [12] or (Smith, 2019).
 4. Answers must be accurate, complete and professional, as from an experienced expert: \

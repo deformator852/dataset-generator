@@ -1,12 +1,18 @@
-"""NIBRS extract files (ICPSR) → a text report of crime statistics for the generator.
+"""NIBRS extract files (ICPSR) → a text report of offender profiles for the generator.
 
-The numbers are computed here, with pandas, from the victim-level file; the model only
-turns the report into training examples, so it cannot get a figure wrong. Variables are
-found by their labels, which Stata and SPSS files store, rather than by names, which may
-differ between years of the extract files: `--inspect` shows what was found.
+The report gives base rates for profiling: for victims of an offense with a given feature
+(the victim's sex and age, the weapon, the location, the time, the circumstances), what the
+offenders were like (relationship to the victim, sex, age, number, alcohol or drugs). The
+numbers are computed here, with pandas, from the victim-level file; the model only turns
+the report into training examples, so it cannot get a figure wrong.
 
-    uv run nibrs-report ~/Downloads/ICPSR_39270-V2.zip
-    uv run nibrs-report ~/Datasets/NIBRS-2023 --inspect     # an unpacked download works too
+Several years can be pooled into one report, which gives enough cases for rare
+combinations. Variables are found by their labels, which Stata and SPSS files store, and
+renamed to the same names for every year: `--inspect` shows what was found.
+
+    uv run nibrs-report ~/Downloads/Nibrs/NIBRS-2024.zip
+    uv run nibrs-report ~/Downloads/Nibrs/*.zip                 # several years, pooled
+    uv run nibrs-report ~/Datasets/NIBRS-2023 --inspect         # an unpacked download too
 """
 
 import argparse
@@ -22,8 +28,10 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+import numpy as np
 import pandas as pd
 import pyreadstat
+from pandas.api.types import union_categoricals
 
 READERS: dict[str, Callable[..., Any]] = {
     ".dta": pyreadstat.read_dta,
@@ -33,7 +41,8 @@ READERS: dict[str, Callable[..., Any]] = {
     ".sas7bdat": pyreadstat.read_sas7bdat,
 }
 _CHUNK_ROWS = 1_000_000
-_MIN_GROUP = 30  # fewer victims than this: no paragraph, the shares would be noise
+_MIN_GROUP = 30  # fewer known values than this: the shares would be noise
+_MIN_PROFILE = 100  # fewer victims than this: no offender profile
 _TOP = 8  # categories listed per paragraph; the rest are summed up as "other"
 
 
@@ -41,7 +50,7 @@ _TOP = 8  # categories listed per paragraph; the rest are summed up as "other"
 class Concept:
     key: str
     label: str  # regex on the variable label
-    multi: bool = False  # numbered variables (injury 1…5): all of them, not just the first
+    multi: bool = False  # numbered variables (offense 1…10): all of them, not just the first
 
 
 # Race and ethnicity are left out on purpose: an assistant for investigators must not learn
@@ -52,49 +61,45 @@ VICTIM_CONCEPTS = (
     Concept("victim_age", r"^age of victim$"),
     Concept("victim_sex", r"^sex of victim$"),
     Concept("circumstance", r"homicide circumstance \d", multi=True),
-    Concept("injury", r"^injury \d", multi=True),
     Concept("relationship", r"^relationship vic(tim)? to off(ender)? 1$"),
     Concept("hour", r"incident date hour"),
     Concept("offenders", r"^total offender segments$"),
     Concept("arrestees", r"^total arrestee segments$"),
     Concept("cleared_exceptionally", r"^cleared exceptionally$"),
+    # Offender 1 of the victim-level file is the offender the victim is linked to (checked
+    # on the 2024 file: the same offender for 99.9% of victims with a relationship).
     Concept("offender_number", r"^offender sequence number - 1$"),
     Concept("offender_age", r"^age of offender - 1$"),
     Concept("offender_sex", r"^sex of offender - 1$"),
 )
 # The incident's offense records (up to three in this file), "… - 1" to "… - 3": weapons,
-# location and completion are taken from the record of the offense against the victim.
+# location and alcohol or drug use are taken from the record of the offense against the
+# victim.
 SEGMENT_CONCEPTS = (
     Concept("segment_offense", r"^ucr offense code - (\d)$"),
-    Concept("completed", r"attempted ?/ ?completed - (\d)$"),
     Concept("location", r"^location type - (\d)$"),
     Concept("weapon", r"^weapon ?/ ?force \d - (\d)$", multi=True),
     Concept("using", r"suspected of using \d - (\d)$", multi=True),
 )
+_MULTI = {concept.key: concept.multi for concept in VICTIM_CONCEPTS}
 
 OFFENSES = (
     ("murder and nonnegligent manslaughter", r"murder"),
-    ("negligent manslaughter", r"(?<!non)negligent manslaughter"),
-    ("rape", r"(?<!statutory )\brape\b"),
-    ("sodomy", r"sodomy"),
-    ("sexual assault with an object", r"with (an )?object"),
-    ("fondling", r"fondling"),
+    (
+        "rape, sodomy or sexual assault with an object",
+        r"(?<!statutory )\brape\b|sodomy|with (an )?object",
+    ),
+    # 11D was renamed from "Fondling" to "Criminal Sexual Contact" in the 2024 data.
+    ("fondling or criminal sexual contact", r"fondling|criminal sexual contact"),
     ("aggravated assault", r"aggravated assault"),
     ("robbery", r"robbery"),
     ("kidnapping or abduction", r"kidnap|abduct"),
-    ("human trafficking for commercial sex acts", r"trafficking.{0,3}commercial"),
-    ("human trafficking for involuntary servitude", r"trafficking.{0,3}involuntary"),
 )
-_HOMICIDES = {"murder and nonnegligent manslaughter", "negligent manslaughter"}
-_WITH_CIRCUMSTANCES = _HOMICIDES | {"aggravated assault"}
-# Offenses where the victim's age decides most (child abuse vs adult victims).
-_BY_AGE = {
-    "rape",
-    "sodomy",
-    "sexual assault with an object",
-    "fondling",
-    "kidnapping or abduction",
-    "human trafficking for commercial sex acts",
+_WITH_CIRCUMSTANCES = {"murder and nonnegligent manslaughter", "aggravated assault"}
+# Offender profiles by the victim's sex combined with the location and with the weapon.
+_DETAILED = {
+    "murder and nonnegligent manslaughter",
+    "rape, sodomy or sexual assault with an object",
 }
 
 # Order matters: "child of boyfriend" before partners, "boyfriend" before "friend",
@@ -107,6 +112,43 @@ _RELATIONSHIPS = (
     ("acquaintance or otherwise known", r"acquaint|friend|neighbo|babysit|employ|known"),
     ("stranger", r"stranger"),
 )
+# Condition phrases complete "offender profile for offenses …"; order matters, the first
+# match wins ("parking" before "park").
+_WEAPONS = (
+    ("involving a firearm", r"firearm|handgun|rifle|shotgun"),
+    ("involving a knife or cutting instrument", r"knife|cutting"),
+    ("involving a blunt object", r"blunt"),
+    ("involving hands, fists, feet or other personal weapons", r"personal weapons"),
+    ("involving asphyxiation", r"asphyx"),
+    ("involving a motor vehicle", r"motor vehicle"),
+    ("involving fire or an incendiary device", r"incendiary"),
+    ("involving poison or drugs", r"poison|drugs/narcotics|sleeping"),
+    ("in which no weapon was used", r"^no weapon"),
+)
+_LOCATIONS = (
+    ("at a residence or home", r"residence|home"),
+    ("in a parking lot or garage", r"parking"),
+    ("on a highway, road, alley, street or sidewalk", r"highway|road|alley|street|sidewalk"),
+    (
+        "outdoors in a field, woods, at a lake or beach, or in a park",
+        r"field|woods|lake|waterway|beach|\bpark\b|playground|camp",
+    ),
+    ("at a hotel or motel", r"hotel|motel"),
+    ("at a bar or nightclub", r"bar/nightclub|nightclub"),
+    (
+        "at a store, restaurant, gas station or bank",
+        r"store|grocery|supermarket|mall|restaurant|liquor|gas station|bank|atm",
+    ),
+    ("at a school, college or daycare", r"school|college|daycare"),
+    ("in cyberspace", r"cyberspace"),
+)
+_CIRCUMSTANCES = (
+    ("that arose from an argument", r"argument"),
+    ("involving domestic violence or a lovers' quarrel", r"lovers|domestic"),
+    ("linked to drug dealing", r"drug dealing"),
+    ("linked to gang activity", r"gang"),
+    ("committed during another felony", r"other felony"),
+)
 _AGE_BANDS = (
     (0, 11, "under 12"),
     (12, 17, "12–17"),
@@ -116,6 +158,13 @@ _AGE_BANDS = (
     (50, 64, "50–64"),
     (65, 200, "65 and over"),
 )
+_OFFENDER_AGE_BANDS = (
+    (0, 17, "under 18"),
+    (18, 24, "18–24"),
+    (25, 34, "25–34"),
+    (35, 49, "35–49"),
+    (50, 200, "50 and over"),
+)
 # Hour 00 is left out: see the introduction of the report.
 _HOUR_BANDS = (
     (1, 5, "night (01:00–05:59)"),
@@ -123,7 +172,14 @@ _HOUR_BANDS = (
     (12, 17, "afternoon (12:00–17:59)"),
     (18, 23, "evening (18:00–23:59)"),
 )
+_HOUR_PHRASES = {
+    "night (01:00–05:59)": "committed at night (01:00–05:59)",
+    "morning (06:00–11:59)": "committed in the morning (06:00–11:59)",
+    "afternoon (12:00–17:59)": "committed in the afternoon (12:00–17:59)",
+    "evening (18:00–23:59)": "committed in the evening (18:00–23:59)",
+}
 _FIREARM = re.compile(r"firearm|handgun|rifle|shotgun", re.I)
+_ALCOHOL_OR_DRUGS = re.compile(r"alcohol|drug", re.I)
 _UNKNOWN = re.compile(
     r"unknown|undetermined|missing|not (reported|applicable|specified)|^na |^\s*$|^nan$|^<na>$",
     re.I,
@@ -140,63 +196,107 @@ class Columns:
         names += [name for slots in self.segment.values() for ns in slots.values() for name in ns]
         return sorted(set(names))
 
+    def canonical(self) -> tuple[dict[str, str], "Columns"]:
+        """The same names in every year's file: offense_1…, weapon_2_1 (offense record 2)…"""
+        rename: dict[str, str] = {}
+        victim: dict[str, list[str]] = {}
+        for key, names in self.victim.items():
+            new = [f"{key}_{i}" for i in range(1, len(names) + 1)] if _MULTI[key] else [key]
+            rename |= dict(zip(names, new, strict=True))
+            victim[key] = new
+        segment: dict[str, dict[int, list[str]]] = {}
+        for key, slots in self.segment.items():
+            segment[key] = {}
+            for number, names in slots.items():
+                new = [f"{key}_{number}_{i}" for i in range(1, len(names) + 1)]
+                rename |= dict(zip(names, new, strict=True))
+                segment[key][number] = new
+        return rename, Columns(victim, segment)
+
+
+@dataclass(frozen=True, slots=True)
+class Year:
+    year: int
+    records: int  # victim records of all kinds
+    midnight: int  # of them at hour 00
+
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
         prog="nibrs-report",
-        description="Turns the NIBRS extract files (ICPSR) into a text report of crime "
-        "statistics that dataset-generator can process like an article.",
+        description="Turns the NIBRS extract files (ICPSR) into a text report of offender "
+        "profiles that dataset-generator can process like an article.",
     )
-    parser.add_argument("source", type=Path, help="the ICPSR download: a .zip or its folder")
-    parser.add_argument("--victims", type=Path, help="the victim-level file, if not found")
-    parser.add_argument("-o", "--output", type=Path, help="default: input/<name>.txt")
     parser.add_argument(
-        "--name", help='data name in the report text; default: "NIBRS <year of the data>"'
+        "sources",
+        type=Path,
+        nargs="+",
+        help="ICPSR downloads: .zip archives, their folders or victim-level data files; "
+        "several years are pooled into one report",
     )
+    parser.add_argument("-o", "--output", type=Path, help="default: input/<name>.txt")
+    parser.add_argument("--name", help='data name in the report; default: "NIBRS <years>"')
     parser.add_argument(
         "--inspect", action="store_true", help="list the variables and what they were taken for"
     )
     args = parser.parse_args(argv)
 
-    if args.victims:
-        return _run(args.victims, args)
-    if args.source.suffix.lower() == ".zip":
-        with extracted_victim_file(args.source) as victims:
-            return _run(victims, args) if victims else 1
-    victims = find_victim_file(args.source)
-    if victims is None:
-        print(f"No victim-level file in {args.source}; use --victims")
-        return 1
-    return _run(victims, args)
-
-
-def _run(victims: Path, args: argparse.Namespace) -> int:
+    frames: list[pd.DataFrame] = []
+    columns: list[Columns] = []
+    years: list[Year] = []
+    for source in args.sources:
+        with victim_file(source) as path:
+            if path is None:
+                return 1
+            if args.inspect:
+                inspect(path)
+                continue
+            found = find_columns(path)
+            if "offense" not in found.victim:
+                print(f"No offense code variables in {path.name}; check with --inspect")
+                return 1
+            have = set(found.victim) | set(found.segment)
+            missing = [c.key for c in (*VICTIM_CONCEPTS, *SEGMENT_CONCEPTS) if c.key not in have]
+            if missing:
+                print(f"{source.name}: not found, left out: {', '.join(missing)}")
+            year = data_year(path)
+            if year is None:
+                print(f"{source.name}: the year of the data was not found")
+                return 1
+            if year in {y.year for y in years}:
+                print(f"{source.name}: {year} is already among the sources")
+                return 1
+            print(f"Reading {path.name} ({year})…")
+            frame, records, midnight = load_victims(path, found)
+            frames.append(frame)
+            columns.append(found.canonical()[1])
+            years.append(Year(year, records, midnight))
     if args.inspect:
-        inspect(victims)
         return 0
-    columns = find_columns(victims)
-    if "offense" not in columns.victim:
-        print(f"No offense code variables in {victims.name}; check with --inspect")
-        return 1
-    found = set(columns.victim) | set(columns.segment)
-    missing = [c.key for c in (*VICTIM_CONCEPTS, *SEGMENT_CONCEPTS) if c.key not in found]
-    if missing:
-        print(f"Not found, left out of the report: {', '.join(missing)}")
 
-    year = data_year(victims)
-    if not args.name and not year:
-        print('The year of the data was not found; set it with --name "NIBRS <year>"')
-        return 1
-    name = args.name or f"NIBRS {year}"
-    print(f"Reading {victims.name} ({name})…")
-    frame, total, midnight = load_victims(victims, columns)
-    report = build_report(frame, columns, name=name, total=total, midnight=midnight)
+    name = args.name or f"NIBRS {_years_label(sorted(y.year for y in years))}"
+    report = build_report(_concat(frames), _merge(columns), name=name, years=years)
     output = args.output or Path("input") / f"{_slug(name)}.txt"
     output.parent.mkdir(parents=True, exist_ok=True)
     output.write_text(report, encoding="utf-8")
     print(f"{len(report):,} characters → {output}")
-    print(f"Next: uv run dataset-generator {output} -k mixed")
+    print(f"Next: uv run dataset-generator {output} -k mixed -n 4")
     return 0
+
+
+@contextmanager
+def victim_file(source: Path) -> Iterator[Path | None]:
+    if source.suffix.lower() == ".zip":
+        with extracted_victim_file(source) as path:
+            yield path
+        return
+    if source.suffix.lower() in READERS:
+        yield source
+        return
+    path = find_victim_file(source) if source.is_dir() else None
+    if path is None:
+        print(f"No victim-level file in {source}")
+    yield path
 
 
 @contextmanager
@@ -346,13 +446,15 @@ def inspect(path: Path) -> None:
         print(f"{name:<14} {label}{mark}")
 
 
-def load_victims(path: Path, columns: Columns) -> tuple[pd.DataFrame, int, float]:
-    """Individual victims of the offenses in the report.
+def load_victims(path: Path, columns: Columns) -> tuple[pd.DataFrame, int, int]:
+    """Individual victims of the offenses in the report, with the canonical column names.
 
-    The file is read in chunks and only those victims are kept, so it fits in memory.
-    Codes are replaced with their labels (131 → "Aggravated Assault"). Also returns the
-    number of victim records of all kinds and the share of them recorded at hour 00.
+    The file is read in chunks and only those victims are kept, as categories, so even
+    several pooled years fit in memory. Codes are replaced with their labels (131 →
+    "Aggravated Assault"). Also returns the number of victim records of all kinds and how
+    many of them were recorded at hour 00.
     """
+    rename, canonical = columns.canonical()
     patterns = [re.compile(pattern, re.I) for _, pattern in OFFENSES]
     hour = columns.victim.get("hour", [None])[0]
     kept: list[pd.DataFrame] = []
@@ -368,22 +470,54 @@ def load_victims(path: Path, columns: Columns) -> tuple[pd.DataFrame, int, float
         total += len(chunk)
         if hour:
             midnight += int((pd.to_numeric(chunk[hour], errors="coerce") == 0).sum())
+        chunk = chunk.rename(columns=rename)
         mask = pd.Series(False, index=chunk.index)
         for pattern in patterns:
-            mask |= _matches(chunk, columns.victim["offense"], pattern)
-        if "victim_type" in columns.victim:
-            victim_type = chunk[columns.victim["victim_type"][0]].astype(str)
+            mask |= _matches(chunk, canonical.victim["offense"], pattern)
+        if "victim_type" in canonical.victim:
+            victim_type = chunk["victim_type"].astype(str)
             mask &= victim_type.str.contains("individual", case=False)
-        kept.append(chunk[mask].astype(str))
+        kept.append(chunk[mask].astype(str).astype("category"))
         print(f"  {total:,} victim records read", end="\r", flush=True)
     print()
-    return pd.concat(kept, ignore_index=True), total, midnight / total if total else 0.0
+    return _concat(kept), total, midnight
+
+
+def _concat(frames: list[pd.DataFrame]) -> pd.DataFrame:
+    """Joins categorical frames without turning them into millions of Python strings."""
+    names = list(dict.fromkeys(name for frame in frames for name in frame.columns))
+    data = {}
+    for name in names:
+        parts = [
+            frame[name].array
+            if name in frame
+            else pd.Categorical.from_codes(np.zeros(len(frame), dtype=np.int8), ["nan"])
+            for frame in frames
+        ]
+        data[name] = union_categoricals(parts, ignore_order=True)
+    return pd.DataFrame(data)
+
+
+def _merge(columns: list[Columns]) -> Columns:
+    """Canonical columns of several years: the widest set of each concept."""
+    victim: dict[str, list[str]] = {}
+    segment: dict[str, dict[int, list[str]]] = {}
+    for each in columns:
+        for key, names in each.victim.items():
+            victim[key] = max(victim.get(key, []), names, key=len)
+        for key, slots in each.segment.items():
+            for number, names in slots.items():
+                current = segment.setdefault(key, {}).get(number, [])
+                segment[key][number] = max(current, names, key=len)
+    return Columns(victim, segment)
 
 
 def _matches(frame: pd.DataFrame, names: Iterable[str], pattern: re.Pattern[str]) -> pd.Series:
     """Rows where any of the columns has a value matching the pattern."""
     mask = pd.Series(False, index=frame.index)
     for name in names:
+        if name not in frame:
+            continue
         values = frame[name]
         hits = [value for value in values.dropna().unique() if pattern.search(str(value))]
         mask |= values.isin(hits)
@@ -393,141 +527,287 @@ def _matches(frame: pd.DataFrame, names: Iterable[str], pattern: re.Pattern[str]
 # --- the report ----------------------------------------------------------------------
 
 
-def build_report(
-    frame: pd.DataFrame, columns: Columns, *, name: str, total: int, midnight: float
-) -> str:
+@dataclass(frozen=True, slots=True)
+class Offense:
+    """The values of one offense's victims, converted once and shared by its paragraphs."""
+
+    victims: int
+    victim_sex: pd.Series | None
+    victim_age: pd.Series | None
+    weapon_labels: pd.DataFrame | None  # as recorded, several per victim
+    weapons: pd.DataFrame | None  # weapon groups of the profiles
+    firearm: pd.Series | None
+    location_label: pd.Series | None  # as recorded
+    location: pd.Series | None  # location groups of the profiles
+    hour: pd.Series | None  # time of day bands
+    circumstances: pd.DataFrame | None  # circumstance groups, several per victim
+    known: pd.Series  # offender information was recorded
+    relationship: pd.Series | None
+    offender_sex: pd.Series | None
+    offender_age: pd.Series | None
+    offenders: pd.Series | None  # one, two, three or more
+    using: pd.Series | None  # alcohol or drugs suspected
+
+
+def build_report(frame: pd.DataFrame, columns: Columns, *, name: str, years: list[Year]) -> str:
     # Every paragraph names the data: the generator cuts the report into fragments, and
     # each fragment must say where its figures come from.
-    prefix = f"In {name} data (US agencies participating in NIBRS, not nationally representative),"
-    sections = [_introduction(name, total, midnight)]
+    # The country is in the sentence itself, not in the brackets: models retelling the
+    # report tend to drop what is in brackets.
+    scope = "agencies participating in NIBRS, not nationally representative"
+    if len(years) > 1:
+        scope = f"pooled, {scope}"
+    prefix = f"In {name} data from the United States ({scope}),"
+    sections = [_introduction(name, years, frame, columns)]
     for offense, pattern in OFFENSES:
         regex = re.compile(pattern, re.I)
-        victims = frame[_matches(frame, columns.victim["offense"], regex)]
-        if len(victims) < _MIN_GROUP:
+        victims = frame[_matches(frame, columns.victim["offense"], regex)].reset_index(drop=True)
+        if len(victims) < _MIN_PROFILE:
             continue
-        paragraphs = list(_offense_paragraphs(offense, regex, victims, columns, prefix))
+        data = _offense_data(victims, columns, regex)
+        base = f"{prefix} {offense} —"
+        paragraphs = [*_overview(base, offense, victims, columns, data)]
+        paragraphs += [p for p in _profiles(base, offense, data) if p]
         sections.append(f"{offense.capitalize()}\n\n" + "\n\n".join(paragraphs))
     return "\n\n\n".join(sections) + "\n"
 
 
-def _introduction(name: str, total: int, midnight: float) -> str:
+def _introduction(name: str, years: list[Year], frame: pd.DataFrame, columns: Columns) -> str:
+    records = sum(y.records for y in years)
+    midnight = sum(y.midnight for y in years) / records if records else 0.0
+    if len(years) == 1:
+        source = f"the victim-level file of {name} ({records:,} victim records of all kinds)"
+        pooling = ""
+    else:
+        per_year = ", ".join(
+            f"{y.year}: {y.records:,}" for y in sorted(years, key=lambda y: y.year)
+        )
+        source = (
+            f"the victim-level files of {len(years)} years pooled together ({records:,} victim "
+            f"records of all kinds; {per_year})"
+        )
+        pooling = (
+            " The years are pooled to have enough cases for rare combinations; agency "
+            "participation and some classifications differ between years, so the pooled "
+            "shares are averages over the agencies that reported in each year."
+        )
     return f"""\
-Crime statistics from {name}: victims of violent and sexual offenses
+Offender profiles from {name} (United States): what the circumstances of violent and \
+sexual offenses say about the offender
 
 The National Incident-Based Reporting System (NIBRS) is part of the FBI's Uniform Crime \
 Reporting Program. Participating law enforcement agencies report every criminal incident \
 and arrest: for each Group A offense, they record the offense, the location, weapons or \
-force used, and the victims, offenders and arrestees. \
-An incident is one or more offenses committed by the same offender, or group of offenders \
-acting in concert, at the same time and place.
+force used, and the victims, offenders and arrestees. An incident is one or more offenses \
+committed by the same offender, or group of offenders acting in concert, at the same time \
+and place.
 
-This report was computed from the victim-level file of {name} ({total:,} victim records of \
-all kinds). It covers victims who are individuals (not businesses, society or the \
-government) and against whom one of the offenses below was committed; a victim of several \
-such offenses appears in several sections. Shares are given among victims with a known \
-value, and the share of unknown or unreported values is stated separately. Weapons, the \
-location and whether the offense was completed come from the incident's record of that \
-offense. The relationship refers to the first offender linked to the victim, and the age \
-and sex of the offender to the first offender of the incident. The number of offenders \
-and the clearance are counted for the incident. Relationships are grouped as follows: \
-intimate partner (spouse, common-law spouse, ex-spouse, boyfriend or girlfriend, \
-ex-relationship, same-sex relationship), family member (parent, child, sibling, \
-grandparent, grandchild, in-law, step-relatives, foster relatives, other family), \
-acquaintance or otherwise known (acquaintance, friend, neighbor, babysittee, employee, \
-employer, non-intimate cohabitant, child of a boyfriend or girlfriend, otherwise known) \
-and stranger.
+This report was computed from {source}. For each offense it first describes the victims \
+and the offense, and then gives offender profiles: among victims with a given feature — \
+the victim's sex and age, the weapon, the location, the time of day or the circumstances \
+— how the offenders were distributed by their relationship to the victim, sex and age, \
+how often there were several offenders, and how often the offender was suspected of using \
+alcohol or drugs. These are base rates for forming and ranking investigative hypotheses; \
+they do not predict who committed a particular crime and must not be used to exclude a \
+suspect.
 
-The time of day leaves out the hour 00:00–00:59: it holds {midnight:.1%} of all victim \
-records, several times more than the neighbouring hours, so it evidently also contains \
-incidents whose time was unknown. A case is counted as cleared by arrest if the incident \
-has at least one arrestee in the data, and as cleared exceptionally if the agency reported \
-an exceptional clearance (for example, the offender died or prosecution was declined).
+Method: the report covers victims who are individuals (not businesses, society or the \
+government) and against whom the offense was committed; a victim of several offenses \
+appears in several sections. The offender is the first offender linked to the victim. \
+Offender characteristics are given as shares among victims where the characteristic was \
+recorded, and that share is stated. The weapon, the location and suspected alcohol or \
+drug use come from the incident's record of that offense; the number of offenders and the \
+clearance refer to the incident. Relationships are grouped as follows: intimate partner \
+(spouse, common-law spouse, ex-spouse, boyfriend or girlfriend, ex-relationship, same-sex \
+relationship), family member (parent, child, sibling, grandparent, grandchild, in-law, \
+step-relatives, foster relatives, other family), acquaintance or otherwise known \
+(acquaintance, friend, neighbor, babysittee, employee, employer, non-intimate cohabitant, \
+child of a boyfriend or girlfriend, otherwise known) and stranger. Race and ethnicity were \
+left out of this report.{pooling}
+
+Bias: offender information is recorded mostly when a suspect was identified. Offenders \
+who are strangers to the victim are identified less often than partners, relatives and \
+acquaintances, so among recorded offenders strangers are under-represented. The profiles \
+describe the offenders of crimes recorded by the police with offender information, not \
+all offenders. The time of day leaves out the hour 00:00–00:59: it holds {midnight:.1%} \
+of all victim records, several times more than the neighbouring hours, so it evidently \
+also contains incidents whose time was unknown.
 
 Limitations: the data are not a nationally representative sample of crime in the United \
 States, because agency participation varies between states and cities. The figures \
 describe crimes known to and recorded by the police, classified when they were reported, \
 not court findings; crimes that were never reported, such as many sexual offenses, are \
-missing. Offender information is often unknown, especially when no suspect was \
-identified."""
+missing. A case is counted as cleared by arrest if the incident has at least one arrestee \
+in the data."""
 
 
-def _offense_paragraphs(
-    offense: str,
-    regex: re.Pattern[str],
-    victims: pd.DataFrame,
-    columns: Columns,
-    prefix: str,
-) -> Iterable[str]:
-    has = columns.victim.__contains__
-
-    def values(key: str, convert: Callable[[str], str | None] = _known) -> pd.Series:
+def _offense_data(victims: pd.DataFrame, columns: Columns, regex: re.Pattern[str]) -> Offense:
+    def values(key: str, convert: Callable[[Any], Any] = _known) -> pd.Series | None:
+        if key not in columns.victim:
+            return None
         return _convert(victims[columns.victim[key][0]], convert)
 
-    base = f"{prefix} {offense} —"
-    ages = _band_order(_AGE_BANDS)
-    sex = values("victim_sex", _sex) if has("victim_sex") else None
-    age = values("victim_age", _age_band) if has("victim_age") else None
     record = _offense_record(victims, columns, regex)
-
-    if sex is not None:
-        yield _shares(base, "sex of the victim", sex)
-    if age is not None:
-        yield _shares(base, "age of the victim", age, order=ages)
-    if has("relationship"):
-        relationship = values("relationship", _relationship)
-        yield _shares(base, "relationship of the victim to the offender", relationship)
-        yield _shares(
-            base, "detailed relationship of the victim to the offender", values("relationship")
-        )
-        groups: list[tuple[str, pd.Series]] = []
-        if sex is not None:
-            groups += [(f"{value} victims", sex == value) for value in ("female", "male")]
-        if age is not None and offense in _BY_AGE:
-            groups += [
-                ("victims under 12", age == "under 12"),
-                ("victims aged 12–17", age == "12–17"),
-                ("adult victims (18 and over)", age.notna() & ~age.isin(["under 12", "12–17"])),
-            ]
-        for label, mask in groups:
-            if mask.sum() >= _MIN_GROUP:
-                aspect = f"relationship to the offender for {label}"
-                yield _shares(base, aspect, relationship[mask])
-    if has("circumstance") and offense in _WITH_CIRCUMSTANCES:
-        circumstances = victims[columns.victim["circumstance"]]
-        yield _multi_shares(base, "circumstances of the incident", circumstances)
-    if has("injury") and offense not in _HOMICIDES:
-        injuries = _convert_cells(victims[columns.victim["injury"]], _injury)
-        yield _multi_shares(base, "injury of the victim", injuries)
+    weapon_labels = weapons = firearm = location_label = location = None
+    using = circumstances = None
     if "weapon" in record:
-        weapons = _convert_cells(record["weapon"], _weapon)
-        firearm = weapons.apply(lambda column: column.str.contains(_FIREARM, na=False))
-        firearm = firearm.any(axis=1) & weapons.notna().any(axis=1)
-        known = weapons.notna().any(axis=1)
-        sentence = _multi_shares(base, "weapon or force involved", weapons)
+        weapon_labels = _convert_cells(record["weapon"], _weapon)
+        firearm = weapon_labels.apply(lambda column: column.str.contains(_FIREARM, na=False))
+        firearm = firearm.any(axis=1)
+        weapons = _convert_cells(weapon_labels, lambda value: _group(value, _WEAPONS))
+    if "location" in record:
+        location_label = _convert(record["location"][0], _known)
+        location = _convert(location_label, lambda value: _group(value, _LOCATIONS))
+    if "using" in record:
+        cells = _convert_cells(record["using"], _known)
+        using = cells.apply(lambda column: column.str.contains(_ALCOHOL_OR_DRUGS, na=False))
+        using = using.any(axis=1)
+    if "circumstance" in columns.victim:
+        cells = victims[[n for n in columns.victim["circumstance"] if n in victims]]
+        circumstances = _convert_cells(cells, lambda value: _group(value, _CIRCUMSTANCES))
+    if "offender_number" in columns.victim:
+        known = ~_convert(victims["offender_number"], _offender_unknown).astype(bool)
+    else:
+        known = pd.Series(True, index=victims.index)
+    offenders = None
+    if "offenders" in columns.victim:
+        count = _numeric(victims["offenders"])
+        offenders = _convert(count, _count_band).where(known, None)
+    return Offense(
+        victims=len(victims),
+        victim_sex=values("victim_sex", _sex),
+        victim_age=values("victim_age", _age_band),
+        weapon_labels=weapon_labels,
+        weapons=weapons,
+        firearm=firearm,
+        location_label=location_label,
+        location=location,
+        hour=values("hour", _hour_band),
+        circumstances=circumstances,
+        known=known,
+        relationship=values("relationship", _relationship),
+        offender_sex=values("offender_sex", _sex),
+        offender_age=values("offender_age", _offender_age_band),
+        offenders=offenders,
+        using=using,
+    )
+
+
+def _overview(
+    base: str, offense: str, victims: pd.DataFrame, columns: Columns, data: Offense
+) -> Iterable[str]:
+    text = (
+        f"{base} overview, {data.victims:,} victims. Offender information was recorded for "
+        f"{_pct(data.known.sum(), data.victims)} of them."
+    )
+    if "arrestees" in columns.victim:
+        text += " " + _clearance(victims, columns)
+    yield text
+    if data.victim_sex is not None:
+        yield _shares(base, "sex of the victim", data.victim_sex)
+    if data.victim_age is not None:
+        yield _shares(base, "age of the victim", data.victim_age, order=_band_order(_AGE_BANDS))
+    if data.weapon_labels is not None and data.firearm is not None:
+        sentence = _multi_shares(base, "weapon or force involved", data.weapon_labels)
+        known = data.weapon_labels.notna().any(axis=1)
         if known.sum():
             sentence += (
-                f" A firearm of any type was involved for {_pct(firearm.sum(), known.sum())}."
+                f" A firearm of any type was involved for "
+                f"{_pct((data.firearm & known).sum(), known.sum())}."
             )
         yield sentence
-    if "location" in record:
-        yield _shares(base, "location of the offense", _convert(record["location"][0], _known))
-    completed = _convert(record["completed"][0], _known) if "completed" in record else None
-    if completed is not None and completed.nunique() > 1:  # a murder is always completed
-        yield _shares(base, "offense completed or attempted", completed)
-    if "using" in record:
-        yield _using(base, record["using"])
-    if has("hour"):
-        yield _time_of_day(base, victims[columns.victim["hour"][0]])
-    if has("offenders") and has("offender_number"):
-        yield _shares(
-            base, "number of offenders in the incident", _offender_count(victims, columns)
-        )
-    if has("offender_sex"):
-        yield _shares(base, "sex of the offender", values("offender_sex", _sex))
-    if has("offender_age"):
-        yield _shares(base, "age of the offender", values("offender_age", _age_band), order=ages)
-    if has("arrestees"):
-        yield _clearance(base, victims, columns)
+    if data.location_label is not None:
+        yield _shares(base, "location of the offense", data.location_label)
+    if data.hour is not None and "hour" in columns.victim:
+        yield _time_of_day(base, victims["hour"])
+    if "circumstance" in columns.victim and offense in _WITH_CIRCUMSTANCES:
+        cells = victims[[n for n in columns.victim["circumstance"] if n in victims]]
+        yield _multi_shares(base, "circumstances of the incident", cells)
+
+
+def _profiles(base: str, offense: str, data: Offense) -> Iterable[str | None]:
+    everyone = pd.Series(True, index=data.known.index)
+    yield _profile(base, "all victims", everyone, data)
+    if data.victim_sex is not None and data.victim_age is not None:
+        for sex in ("female", "male"):
+            for _, _, band in _AGE_BANDS:
+                rows = (data.victim_sex == sex) & (data.victim_age == band)
+                yield _profile(base, f"{sex} victims {_aged(band)}", rows, data)
+    conditions: list[tuple[str, pd.Series]] = []
+    if data.weapons is not None:
+        conditions += [
+            (f"offenses {phrase}", (data.weapons == phrase).any(axis=1)) for phrase, _ in _WEAPONS
+        ]
+    if data.location is not None:
+        conditions += [(f"offenses {phrase}", data.location == phrase) for phrase, _ in _LOCATIONS]
+    if data.hour is not None:
+        conditions += [
+            (f"offenses {_HOUR_PHRASES[band]}", data.hour == band) for _, _, band in _HOUR_BANDS
+        ]
+    if data.circumstances is not None and offense in _WITH_CIRCUMSTANCES:
+        conditions += [
+            (f"offenses {phrase}", (data.circumstances == phrase).any(axis=1))
+            for phrase, _ in _CIRCUMSTANCES
+        ]
+    for label, rows in conditions:
+        yield _profile(base, label, rows, data)
+    if offense in _DETAILED and data.victim_sex is not None:
+        for sex in ("female", "male"):
+            victims_of_sex = data.victim_sex == sex
+            if data.location is not None:
+                for phrase, _ in _LOCATIONS:
+                    rows = victims_of_sex & (data.location == phrase)
+                    yield _profile(base, f"{sex} victims of offenses {phrase}", rows, data)
+            if data.weapons is not None:
+                for phrase, _ in _WEAPONS:
+                    rows = victims_of_sex & (data.weapons == phrase).any(axis=1)
+                    yield _profile(base, f"{sex} victims of offenses {phrase}", rows, data)
+
+
+def _profile(base: str, condition: str, rows: pd.Series, data: Offense) -> str | None:
+    """The offenders of the victims in `rows`, or None if there are too few of them."""
+    victims = int(rows.sum())
+    known = int((data.known & rows).sum())
+    if victims < _MIN_PROFILE or known < _MIN_GROUP:
+        return None
+    parts = [
+        f"{base} offender profile for {condition}: {victims:,} victims; offender information "
+        f"was recorded for {_pct(known, victims)}."
+    ]
+    for label, values, order in (
+        ("Relationship of the victim to the offender", data.relationship, None),
+        ("Offender sex", data.offender_sex, None),
+        ("Offender age", data.offender_age, _band_order(_OFFENDER_AGE_BANDS)),
+    ):
+        if values is not None and (part := _distribution(label, values[rows], order)):
+            parts.append(part)
+    if data.offenders is not None:
+        count = data.offenders[rows].dropna()
+        if len(count) >= _MIN_GROUP:
+            several = int((count != "one").sum())
+            parts.append(f"Two or more offenders: {_pct(several, len(count))}.")
+    if data.using is not None:
+        using = _pct(data.using[rows].sum(), victims)
+        parts.append(f"Offender suspected of using alcohol or drugs: {using}.")
+    return " ".join(parts)
+
+
+def _distribution(label: str, values: pd.Series, order: list[str] | None) -> str | None:
+    known = values.dropna()
+    if len(known) < _MIN_GROUP:
+        return None
+    counts = known.value_counts()
+    counts = counts[counts > 0]
+    if order:
+        counts = counts.reindex([value for value in order if value in counts.index])
+    shares = ", ".join(
+        f"{_label(value)} {_pct(count, len(known))}" for value, count in counts.items()
+    )
+    return f"{label} (recorded for {_pct(len(known), len(values))}): {shares}."
+
+
+def _aged(band: str) -> str:
+    return band if band.startswith("under") else f"aged {band}"
 
 
 def _offense_record(
@@ -550,8 +830,9 @@ def _offense_record(
         for position in range(width):
             column = pd.Series(None, index=victims.index, dtype=object)
             for number, names in slots.items():
-                if position < len(names):
-                    column = column.where(record_number != number, victims[names[position]])
+                if position < len(names) and names[position] in victims:
+                    values = victims[names[position]].astype(object)
+                    column = column.where(record_number != number, values)
             frame[position] = column
         result[key] = pd.DataFrame(frame)
     return result
@@ -561,6 +842,7 @@ def _shares(base: str, aspect: str, values: pd.Series, order: list[str] | None =
     """One value per victim: unknown share first, then the shares among known values."""
     known = values.dropna()
     counts = known.value_counts()
+    counts = counts[counts > 0]
     if order:
         counts = counts.reindex([band for band in order if band in counts.index])
     return _sentence(base, aspect, len(values), len(known), counts)
@@ -597,8 +879,7 @@ def _sentence(base: str, aspect: str, total: int, known: int, counts: pd.Series)
 
 def _time_of_day(base: str, hours: pd.Series) -> str:
     """Hour 00 also holds incidents of unknown time, so it is counted apart and left out."""
-    numbers = pd.to_numeric(hours, errors="coerce")
-    midnight = int((numbers == 0).sum())
+    midnight = int((_numeric(hours) == 0).sum())
     bands = _convert(hours, _hour_band)
     known = bands.dropna()
     order = [band for band in _band_order(_HOUR_BANDS) if band in set(known)]
@@ -611,61 +892,16 @@ def _time_of_day(base: str, hours: pd.Series) -> str:
     )
 
 
-def _using(base: str, cells: pd.DataFrame) -> str:
-    """Suspected use is only recorded when it was suspected, so shares are of all victims."""
-    cells = _convert_cells(cells, _known)
-    total = len(cells)
-    counts = _victims_per_value(cells)
-    none = int((~cells.notna().any(axis=1)).sum())
-    parts = [f"{value.lower()} {_pct(count, total)}" for value, count in counts.items()]
-    used = f": {', '.join(parts)}" if parts else ""
-    return (
-        f"{base} offenders suspected of using alcohol, drugs or computer equipment, {total:,} "
-        f"victims. Use was suspected for {_pct(total - none, total)} of the victims{used}; for "
-        f"the other {_pct(none, total)} no use was recorded."
-    )
-
-
-_CLEARANCE_REASONS = (
-    (r"death", "death of the offender"),
-    (r"prosecution", "prosecution declined"),
-    (r"custody of other", "offender in custody of another jurisdiction"),
-    (r"refused", "victim refused to cooperate"),
-    (r"juvenile", "juvenile offender, no custody"),
-)
-
-
-def _clearance_reason(value: str) -> str:
-    return next(
-        (text for pattern, text in _CLEARANCE_REASONS if re.search(pattern, value, re.I)),
-        value.lower(),
-    )
-
-
-def _offender_count(victims: pd.DataFrame, columns: Columns) -> pd.Series:
-    unknown = _convert(
-        victims[columns.victim["offender_number"][0]],
-        lambda value: _UNKNOWN.search(str(value)) is not None or str(value) in {"0", "0.0"},
-    ).astype(bool)
-    bands = _convert(
-        pd.to_numeric(victims[columns.victim["offenders"][0]], errors="coerce"),
-        lambda n: None if pd.isna(n) else "one" if n == 1 else "two" if n == 2 else "three or more",
-    )
-    return bands.where(~unknown, None)
-
-
-def _clearance(base: str, victims: pd.DataFrame, columns: Columns) -> str:
-    arrests = pd.to_numeric(victims[columns.victim["arrestees"][0]], errors="coerce").fillna(0)
+def _clearance(victims: pd.DataFrame, columns: Columns) -> str:
+    arrests = _numeric(victims["arrestees"]).fillna(0)
     status = pd.Series("not cleared", index=victims.index)
     if "cleared_exceptionally" in columns.victim:
-        reason = _convert(victims[columns.victim["cleared_exceptionally"][0]], _known)
-        exceptional = reason.notna()
-        reason = _convert(reason[exceptional], _clearance_reason)
-        status[exceptional] = "cleared exceptionally (" + reason + ")"
+        reason = _convert(victims["cleared_exceptionally"], _known)
+        status[reason.notna()] = "cleared exceptionally"
     status[arrests > 0] = "cleared by arrest"
     counts = status.value_counts()
     parts = [f"{value} {_pct(count, len(status))}" for value, count in counts.items()]
-    return f"{base} clearance of the incident, {len(status):,} victims: {', '.join(parts)}."
+    return f"Clearance of the incident: {', '.join(parts)}."
 
 
 def _pct(part: float, whole: float) -> str:
@@ -682,17 +918,28 @@ def _band_order(bands: Iterable[tuple[int, int, str]]) -> list[str]:
     return [label for _, _, label in bands]
 
 
+def _years_label(years: list[int]) -> str:
+    contiguous = years == list(range(years[0], years[-1] + 1))
+    if len(years) == 1:
+        return str(years[0])
+    return f"{years[0]}–{years[-1]}" if contiguous else ", ".join(map(str, years))
+
+
 # --- value conversion ----------------------------------------------------------------
 
 
 def _convert(values: pd.Series, convert: Callable[[Any], Any]) -> pd.Series:
     """Converts each distinct value once: a column has millions of cells but few values."""
     mapping = {value: convert(value) for value in values.unique()}
-    return values.map(mapping)
+    return pd.Series(values.map(mapping), index=values.index, dtype=object)
 
 
 def _convert_cells(cells: pd.DataFrame, convert: Callable[[Any], Any]) -> pd.DataFrame:
     return cells.apply(lambda column: _convert(column, convert))
+
+
+def _numeric(values: pd.Series) -> pd.Series:
+    return pd.to_numeric(values.astype(str), errors="coerce")
 
 
 def _victims_per_value(cells: pd.DataFrame) -> pd.Series:
@@ -706,14 +953,16 @@ def _known(value: object) -> str | None:
     return None if _UNKNOWN.search(text) else text
 
 
+def _group(value: object, groups: Iterable[tuple[str, str]]) -> str | None:
+    known = _known(value)
+    if known is None:
+        return None
+    return next((name for name, pattern in groups if re.search(pattern, known, re.I)), None)
+
+
 def _weapon(value: object) -> str | None:
     known = _known(value)
     return "no weapon (none)" if known and known.lower() == "none" else known
-
-
-def _injury(value: object) -> str | None:
-    known = _known(value)
-    return "no injury" if known and known.lower() == "none" else known
 
 
 def _sex(value: object) -> str | None:
@@ -736,6 +985,16 @@ def _relationship(value: object) -> str | None:
     return "other"
 
 
+def _offender_unknown(value: object) -> bool:
+    return _UNKNOWN.search(str(value)) is not None or str(value).strip() in {"0", "0.0"}
+
+
+def _count_band(count: float) -> str | None:
+    if pd.isna(count):
+        return None
+    return "one" if count == 1 else "two" if count == 2 else "three or more"
+
+
 def _age(value: object) -> float | None:
     """Age in years; infants are stored as fractions (0.1 under 24 hours … 0.5 under a year)."""
     text = str(value).strip().lower()
@@ -753,6 +1012,11 @@ def _age(value: object) -> float | None:
 def _age_band(value: object) -> str | None:
     age = _age(value)
     return None if age is None else _band(int(age), _AGE_BANDS)
+
+
+def _offender_age_band(value: object) -> str | None:
+    age = _age(value)
+    return None if age is None else _band(int(age), _OFFENDER_AGE_BANDS)
 
 
 def _hour_band(value: object) -> str | None:

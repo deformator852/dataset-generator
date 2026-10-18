@@ -303,39 +303,49 @@ lists (the TUI log shows how many entries were removed).
 ## Statistical data (NIBRS)
 
 Data files (SPSS, Stata, SAS, R, delimited) are tables of codes, not text, so the generator does
-not read them. For the [NIBRS extract files](https://www.icpsr.umich.edu/web/ICPSR/studies/39270)
-from ICPSR there is a converter: it computes the statistics with pandas and writes a text report
-that the generator then processes like an article. The model only phrases the examples, so it
-cannot get a figure wrong, and the quotes are checked against the report.
+not read them. For the [NIBRS extract files](https://www.icpsr.umich.edu/web/NACJD/series/128)
+from ICPSR there is a converter that writes a text report of **offender profiles** — base rates
+for profiling: for victims of an offense with a given feature, what the offenders were like. It
+computes the figures with pandas, and the generator then processes the report like an article,
+so the model only phrases the examples and cannot get a figure wrong; the quotes are checked
+against the report.
 
 Download the collection in **Stata** (or SPSS) format — they store the labels of variables and
-codes — and pass the downloaded archive as it is:
+codes — and pass the downloaded archives as they are. Several years are pooled into one report,
+which gives enough cases for rare combinations; 2021 onwards is the best choice, since then all
+agencies report through NIBRS:
 
 ```bash
-uv run nibrs-report ~/Downloads/ICPSR_39270-V2.zip --inspect   # which variables were found
-uv run nibrs-report ~/Downloads/ICPSR_39270-V2.zip             # → input/nibrs-2023.txt
-uv run dataset-generator input/nibrs-2023.txt -k mixed
+uv run nibrs-report ~/Downloads/Nibrs/*.zip --inspect       # which variables were found
+uv run nibrs-report ~/Downloads/Nibrs/*.zip                 # → input/nibrs-2021-2024.txt
+uv run dataset-generator input/nibrs-2021-2024.txt -k mixed -n 4
 ```
 
-Only the victim-level file is unpacked (found by the archive's manifest, also when it is a
-`.gz` inside the archive), next to the archive, and it is deleted when the report is ready. An
-unpacked download folder works too.
+For each archive only the victim-level file is unpacked (found by the archive's manifest, also
+when it is a `.gz` inside the archive), next to the archive, and it is deleted once it has been
+read; one year takes about two minutes. Unpacked download folders and the data files themselves
+work too.
 
-The report uses the victim-level file (DS4, about 14 million records; a run takes a few
-minutes). It covers individual victims of homicide, negligent manslaughter, rape and other
-sexual offenses, aggravated assault, robbery, kidnapping and human trafficking: the victim's sex
-and age; the relationship to the offender, also by the victim's sex and, for sexual offenses and
-kidnapping, by age; circumstances; injuries; weapons (and the share of firearms), location and
-completion, taken from the incident's record of that very offense; suspected alcohol or drug
-use; time of day; the number of offenders and the offender's sex and age; and clearance by
-arrest or exceptionally. Every paragraph names the data and states the share of unknown values;
-the report begins with the definitions, the method and the limitations of NIBRS. Race and
+The report covers individual victims of murder, rape, sodomy and sexual assault with an object,
+fondling (criminal sexual contact), aggravated assault, robbery and kidnapping. For each offense
+it gives an overview (victims, clearance, the victim's sex and age, weapons, locations, time of
+day, circumstances) and then offender profiles — the relationship to the victim, the offender's
+sex and age, two or more offenders, suspected alcohol or drug use — for all victims and by:
+
+- the victim's sex and age;
+- the weapon (firearm, knife, blunt object, hands and feet, asphyxiation…);
+- the location (residence, street, parking lot, outdoors, hotel, bar, store, school…);
+- the time of day and, for murder and aggravated assault, the circumstances;
+- for murder and sexual assault, also the victim's sex combined with the location and with the
+  weapon.
+
+Every paragraph names the data and says for how many victims each characteristic was recorded.
+The report begins with the definitions, the method, and the biases: offender information comes
+mostly from cases with an identified suspect, so strangers are under-represented. Race and
 ethnicity are left out on purpose, so that the model does not learn to profile by race.
-The victim-level file is recognised by its variables (it is DS2 in the 1991–2016 extract files
-and DS4 since 2017), and variables by their labels, so `--inspect` shows what each one was taken
-for. The year in the text is taken from the data; `--name "NIBRS 2015"` sets it by hand.
-
-The documentation PDFs of the collection (codebook, user guide) go to the generator as they are.
+Variables are recognised by their labels and renamed to the same names for every year, so
+`--inspect` shows what each one was taken for. The years in the text are taken from the data;
+`--name` sets the name by hand.
 
 ## Fine-tuning
 
@@ -357,7 +367,7 @@ src/dataset_generator/
 ├── backends.py     DeepSeek API: streaming requests, JSON checks, errors
 ├── llm.py          example generation and source analysis on top of the backend
 ├── quality.py      quality labels and the check of supporting quotes against the source
-├── nibrs.py        NIBRS data files → a text report of crime statistics
+├── nibrs.py        NIBRS data files → a text report of offender profiles
 ├── source_card.py  source cards: description of the source, statistics of its datasets
 ├── kinds.py        dataset types: response schemas, prompt tasks, examples
 ├── prompts.py      forensic expert prompts
